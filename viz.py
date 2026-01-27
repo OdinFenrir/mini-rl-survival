@@ -1,4 +1,10 @@
 """
+Visualization helpers for mini-rl-survival
+Provides:
+- render_color(env): terminal renderer using ANSI + emoji
+- q_heatmap(agent, env, out): save a PNG heatmap of average max-Q per agent (x,y)
+"""
+
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Dict, Tuple
@@ -101,4 +107,3 @@ def q_heatmap(agent, env, out: str = "q_heatmap.png", vmax: float | None = None)
     plt.tight_layout()
     plt.savefig(out, dpi=150)
     plt.close(fig)
-"""
