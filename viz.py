@@ -1,23 +1,24 @@
-import numpy as np
-import matplotlib.pyplot as plt
+﻿"""Minimal viz compatibility module kept for scripts that expect viz.render_color."""
+
 try:
-    from colorama import Fore
-    colorama_available = True
-except ImportError:
-    colorama_available = False
+    from pygame_viewer import GridSurvivalEnv
+except Exception:
+    GridSurvivalEnv = None
 
 
-def render_pretty(text):
-    print(text)
-
-
-def render_color(text):
-    if colorama_available:
-        return f'{Fore.GREEN}{text}{Fore.RESET}'
-    return text
-
-
-def q_heatmap(data):
-    plt.imshow(data, cmap='hot', interpolation='nearest')
-    plt.colorbar()
-    plt.show()
+def render_color(env):
+    # Fallback: return a simple ASCII representation
+    rows = []
+    for y in range(env.height):
+        row = []
+        for x in range(env.width):
+            ch = "."
+            if (x, y) == getattr(env, "food", (None, None)):
+                ch = "F"
+            if (x, y) in getattr(env, "hazards", set()):
+                ch = "X"
+            if (x, y) == getattr(env, "agent", (None, None)):
+                ch = "A"
+            row.append(ch)
+        rows.append("".join(row))
+    return "\\n".join(rows)

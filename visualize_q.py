@@ -1,34 +1,42 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
-Visualize Q-table produced by QLearningAgent.save(...).
-
-Usage:
-    python visualize_q.py --qtable qtable.pkl --out q_heatmap.png
+Quick heatmap exporter for Q-tables (compatible with viewer's qtable format).
+Usage: python visualize_q.py --qtable qtable.pkl --out q_heatmap.png
 """
 import argparse
-import matplotlib
-matplotlib.use("Agg")  # use non-GUI backend so saving works on Windows/servers
-from qlearn import QLearningAgent
-from env import GridSurvivalEnv
-import viz
+import pickle
+import numpy as np
+import matplotlib.pyplot as plt
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--qtable", required=True, help="path to saved Q-table (qtable.pkl)")
-    ap.add_argument("--out", default="q_heatmap.png", help="output PNG filename")
-    ap.add_argument("--w", type=int, default=10, help="grid width (must match trained env)")
-    ap.add_argument("--h", type=int, default=10, help="grid height (must match trained env)")
-    ap.add_argument("--seed", type=int, default=0, help="seed used when saving (if relevant)")
-    args = ap.parse_args()
+ap = argparse.ArgumentParser()
+ap.add_argument("--qtable", required=True)
+ap.add_argument("--out", default="q_heatmap.png")
+ap.add_argument("--w", type=int, default=10)
+ap.add_argument("--h", type=int, default=10)
+args = ap.parse_args()
 
-    # load agent (QLearningAgent.load should return a QLearningAgent instance)
-    agent = QLearningAgent.load(args.qtable, seed=args.seed)
+with open(args.qtable, "rb") as f:
+    q = pickle.load(f)
 
-    env = GridSurvivalEnv(width=args.w, height=args.h, seed=args.seed)
-    print(f"Saving heatmap to {args.out} ...")
-    viz.q_heatmap(agent, env, out=args.out)
-    print("Done.")
+heat = np.zeros((args.h, args.w), dtype=float)
+counts = np.zeros_like(heat, dtype=int)
+for s, qvals in q.items():
+    try:
+        ax, ay = int(s[0]), int(s[1])
+    except Exception:
+        continue
+    if 0 <= ay < args.h and 0 <= ax < args.w:
+        heat[ay, ax] += max(qvals) if qvals else 0.0
+        counts[ay, ax] += 1
+avg = np.zeros_like(heat)
+mask = counts > 0
+avg[mask] = heat[mask] / counts[mask]
 
-
-if __name__ == "__main__":
-    main()
+plt.figure(figsize=(6, 6))
+plt.imshow(avg, origin='upper', cmap='viridis')
+plt.colorbar(label='avg max Q')
+plt.title('Q heatmap (avg max-Q by position)')
+plt.xlabel('x')
+plt.ylabel('y')
+plt.savefig(args.out, dpi=150)
+print('Saved', args.out)

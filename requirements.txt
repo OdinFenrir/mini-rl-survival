@@ -1,1 +1,4 @@
-# no runtime dependencies
+﻿pygame>=2.0.0
+numpy
+imageio
+matplotlib
