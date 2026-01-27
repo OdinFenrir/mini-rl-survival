@@ -7,6 +7,7 @@ from typing import Tuple
 
 from env import GridSurvivalEnv
 from qlearn import QLearningAgent, QLearningConfig
+import viz
 
 
 def run_episode(env: GridSurvivalEnv, agent: QLearningAgent, max_steps: int, train: bool) -> Tuple[int, int, float, str]:
@@ -29,7 +30,7 @@ def run_episode(env: GridSurvivalEnv, agent: QLearningAgent, max_steps: int, tra
 
         obs = res.obs
         if res.done:
-            terminal = res.info.get("terminal", "")
+            terminal = res.info.get("terminal","")
             break
 
     return env.steps, foods, total_reward, terminal
@@ -39,7 +40,7 @@ def eval_stats(env: GridSurvivalEnv, agent: QLearningAgent, episodes: int, max_s
     steps_list = []
     foods_list = []
     rewards_list = []
-    terminals = {}
+    terminals = {} 
 
     for _ in range(episodes):
         steps, foods, total, term = run_episode(env, agent, max_steps=max_steps, train=False)
@@ -69,9 +70,10 @@ def play(env: GridSurvivalEnv, agent: QLearningAgent, max_steps: int, sleep_s: f
             foods += 1
 
         obs = res.obs
-        print(env.render())
-        print(f"t={t:03d} energy={obs[4]:02d} foods={foods:02d} total_reward={total:.2f}")
-        print("-" * env.width)
+        # use colored renderer from viz.py for nicer terminal output
+        print(viz.render_color(env))
+        print(f"t={{t:03d}} energy={{obs[4]:02d}} foods={{foods:02d}} total_reward={{total:.2f}}")
+        print("-" * (2 * env.width - 1))
         time.sleep(sleep_s)
 
         if res.done:
@@ -134,7 +136,7 @@ def main() -> None:
         agent = QLearningAgent(n_actions=4, cfg=cfg, seed=args.seed)
 
     if args.play:
-        print(f"Loaded Q-table size: {len(agent.Q)} states")
+        print(f"Loaded Q-table size: {{len(agent.Q)}} states")
         play(env, agent, max_steps=args.max_steps, sleep_s=args.sleep)
         return
 
@@ -157,9 +159,9 @@ def main() -> None:
 
         if ep % 25 == 0:
             print(
-                f"ep={ep:05d} steps={steps:03d} foods={foods:02d} reward={total:8.2f} term={term:7s} "
-                f"eps={agent.epsilon():.3f} Q_states={len(agent.Q)} "
-                f"last100(avg_steps={statistics.mean(recent_steps):.1f}, avg_foods={statistics.mean(recent_foods):.2f})"
+                f"ep={{ep:05d}} steps={{steps:03d}} foods={{foods:02d}} reward={{total:8.2f}} term={{term:7s}} "
+                f"eps={{agent.epsilon():.3f}} Q_states={{len(agent.Q)}} "
+                f"last100(avg_steps={{statistics.mean(recent_steps):.1f}}, avg_foods={{statistics.mean(recent_foods):.2f}})"
             )
 
         if args.eval_every and ep % args.eval_every == 0:
@@ -170,7 +172,7 @@ def main() -> None:
             agent.save(args.save)
 
     agent.save(args.save)
-    print(f"\nSaved model: {args.save} (Q states={len(agent.Q)})")
+    print(f"\nSaved model: {{args.save}} (Q states={{len(agent.Q)}})")
 
 
 if __name__ == "__main__":
