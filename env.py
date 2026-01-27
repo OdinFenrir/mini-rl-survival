@@ -17,19 +17,19 @@ class StepResult:
 
 class GridSurvivalEnv:
     """
-    Small grid survival environment.
+    Small grid survival environment (kid-friendly).
 
-    State (observation):
+    Observation (state):
       (agent_x, agent_y, food_x, food_y, energy)
 
     Actions:
       0=UP, 1=RIGHT, 2=DOWN, 3=LEFT
 
-    Rewards:
-      +10   when you reach food
-      -10   if you hit a hazard
-      -0.01 per step (tiny "stay alive but don't wander forever" cost)
-      -1.0  if you run out of energy
+    Rewards (simple on purpose):
+      +10.0  when you reach food (and gain energy)
+      -10.0  if you hit a hazard (episode ends)
+      -0.01  per step (tiny "don't wander forever" cost)
+      -1.0   if you run out of energy (episode ends)
 
     Episode ends:
       - hazard
@@ -133,7 +133,7 @@ class GridSurvivalEnv:
 
         reward = -0.01  # tiny living cost
         done = False
-        info: Dict = {}
+        info: Dict = {"steps": self.steps}
 
         # hazard?
         if self.agent in self.hazards:

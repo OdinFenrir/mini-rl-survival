@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import pickle
 import random
 from typing import Dict, Tuple
 
@@ -19,7 +20,7 @@ class QLearningConfig:
 
 class QLearningAgent:
     """
-    Classic Q-learning (tabular).
+    Classic tabular Q-learning.
 
     Q[s][a] updated by:
       Q(s,a) <- Q(s,a) + alpha * (r + gamma*max_a' Q(s',a') - Q(s,a))
@@ -37,9 +38,9 @@ class QLearningAgent:
             self.Q[s] = [0.0 for _ in range(self.n_actions)]
 
     def epsilon(self) -> float:
-        # linear decay to keep it very simple
+        # linear decay to keep it simple
         t = min(self.total_steps, self.cfg.eps_decay_steps)
-        frac = t / self.cfg.eps_decay_steps
+        frac = t / self.cfg.eps_decay_steps if self.cfg.eps_decay_steps > 0 else 1.0
         return self.cfg.eps_start + frac * (self.cfg.eps_end - self.cfg.eps_start)
 
     def act(self, s: State, greedy: bool = False) -> Action:
@@ -57,9 +58,26 @@ class QLearningAgent:
         self._ensure(sp)
 
         q_sa = self.Q[s][a]
-        target = r
-        if not done:
-            target = r + self.cfg.gamma * max(self.Q[sp])
+        target = r if done else (r + self.cfg.gamma * max(self.Q[sp]))
 
         self.Q[s][a] = q_sa + self.cfg.alpha * (target - q_sa)
         self.total_steps += 1
+
+    def save(self, path: str) -> None:
+        payload = {
+            "n_actions": self.n_actions,
+            "cfg": self.cfg,
+            "total_steps": self.total_steps,
+            "Q": self.Q,
+        }
+        with open(path, "wb") as f:
+            pickle.dump(payload, f)
+
+    @staticmethod
+    def load(path: str, seed: int | None = None) -> "QLearningAgent":
+        with open(path, "rb") as f:
+            payload = pickle.load(f)
+        agent = QLearningAgent(n_actions=payload["n_actions"], cfg=payload["cfg"], seed=seed)
+        agent.total_steps = payload.get("total_steps", 0)
+        agent.Q = payload.get("Q", {})
+        return agent

@@ -1,60 +1,49 @@
-Mini RL Agent (Kid-Friendly) — Learn to Survive + Get Food
-========================================================
+Mini RL Survival (Kid-Friendly) — Q-learning that ACTUALLY Learns
+===============================================================
 
-What this is
-------------
-A tiny *tabular* Reinforcement Learning project you can actually understand.
-No deep learning, no big libraries.
+This is a tiny Reinforcement Learning project you can understand.
 
-The world:
-- A 10x10 grid.
-- Your agent starts with ENERGY.
-- Each step costs a bit of energy.
-- There is FOOD on the grid. Reaching it gives reward and refills energy.
-- There are a few HAZARDS. Stepping on them ends the episode.
-- The agent learns using Q-learning.
+You get:
+- a small grid world (env.py)
+- a tabular Q-learning agent (qlearn.py)
+- a trainer you can tweak (train.py)
 
-Goal:
-- Survive as long as possible AND keep collecting food.
-
-How to run
-----------
-1) Open a terminal in this folder
-2) Run:
-
-    python train.py
-
-You’ll see:
-- episode stats
-- a "greedy" evaluation run every so often
-- a tiny ASCII render of the grid during evaluation
+Goal
+----
+Survive longer by:
+- avoiding hazards (X)
+- collecting food (F) to regain energy
 
 Files
 -----
-- env.py     : the environment (grid world)
-- qlearn.py  : Q-learning agent (epsilon-greedy)
-- train.py   : training loop + periodic evaluation
+- env.py     : environment
+- qlearn.py  : Q-learning (save/load included)
+- train.py   : train + eval + play modes (argparse)
 
-Easy tweaks (try these!)
-------------------------
-In train.py:
-- Increase episodes (more learning): EPISODES
-- Change exploration: EPS_START / EPS_END
-- Change learning rate: ALPHA
-- Change discount: GAMMA
+Quick start (Windows PowerShell)
+--------------------------------
+1) Train:
 
-In env.py:
-- Grid size
-- Step energy cost
-- How much energy food gives
-- Number of hazards
+    python .\train.py --episodes 2000 --eval-every 200 --eval-episodes 50 --save qtable.pkl
 
-What to look for
+2) Watch the learned agent play (greedy policy):
+
+    python .\train.py --play --load qtable.pkl --max-steps 200 --sleep 0.05
+
+Easy experiments
 ----------------
-At first the agent dies quickly.
-After some episodes it learns to:
-- avoid hazards
-- head toward food
-- keep energy up (survive longer)
+- Make it learn slower but better:
+    --eps-decay 80000
 
-Have fun iterating.
+- Make survival harder:
+    --hazards 14 --energy-step 2
+
+- Make food more valuable:
+    --energy-food 25
+
+Best tip
+--------
+If you want to *see learning*:
+- train for 5k+ episodes
+- then watch --play
+- compare it to random behavior (delete qtable.pkl or don't --load)

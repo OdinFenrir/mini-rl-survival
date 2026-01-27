@@ -1,2 +1,1 @@
-﻿# Add any runtime dependencies here, for example:
-# numpy==1.26.0
+# no runtime dependencies
