@@ -31,6 +31,7 @@ class QLearningAgent:
 		self.cfg = cfg
 		self._rng = random.Random(seed)
 		self.Q: Dict[State, list[float]] = {}
+		self.N: Dict[State, int] = {}
 		self.total_steps = 0
 
 	def _ensure(self, s: State) -> None:
@@ -61,6 +62,7 @@ class QLearningAgent:
 		target = r if done else (r + self.cfg.gamma * max(self.Q[sp]))
 
 		self.Q[s][a] = q_sa + self.cfg.alpha * (target - q_sa)
+		self.N[s] = self.N.get(s, 0) + 1
 		self.total_steps += 1
 
 	def save(self, path: str) -> None:
@@ -69,6 +71,7 @@ class QLearningAgent:
 			"cfg": self.cfg,
 			"total_steps": self.total_steps,
 			"Q": self.Q,
+			"N": self.N,
 		}
 		with open(path, "wb") as f:
 			pickle.dump(payload, f)
@@ -80,4 +83,5 @@ class QLearningAgent:
 		agent = QLearningAgent(n_actions=payload["n_actions"], cfg=payload["cfg"], seed=seed)
 		agent.total_steps = payload.get("total_steps", 0)
 		agent.Q = payload.get("Q", {})
+		agent.N = payload.get("N", {})
 		return agent

@@ -17,6 +17,10 @@ class MainMenuScene:
         self.focus = FocusManager()
         self.widgets = []
         self._icons: dict[str, pygame.Surface] = {}
+        self._bg_image: pygame.Surface | None = None
+        self._bg_scaled: pygame.Surface | None = None
+        self._bg_scaled_size: tuple[int, int] | None = None
+        self._bg_path: str | None = None
 
     def _load_icons(self, app) -> None:
         if self._icons:
@@ -59,14 +63,32 @@ class MainMenuScene:
             size = int(24 * app.theme.ui_scale)
             self._icons["train"] = make_train_icon(size, color)
 
+    def _load_background(self, app) -> None:
+        base = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "assets"))
+        name = getattr(app.cfg, "menu_background", "menu_background.png")
+        path = os.path.abspath(os.path.join(base, name))
+        if self._bg_path == path and self._bg_image is not None:
+            return
+        self._bg_path = path
+        self._bg_scaled = None
+        self._bg_scaled_size = None
+        if os.path.exists(path):
+            try:
+                self._bg_image = pygame.image.load(path).convert()
+            except Exception:
+                self._bg_image = None
+        else:
+            self._bg_image = None
+
     def _layout(self, app) -> None:
         self._load_icons(app)
         w, h = app.screen.get_size()
         bw = int(460 * app.theme.ui_scale)
         bh = int(60 * app.theme.ui_scale)
         gap = int(14 * app.theme.ui_scale)
-        x = (w - bw) // 2
-        y = h // 2 - int(3.5 * (bh + gap))
+        x = max(0, (w - bw) // 2)
+        total_h = 6 * (bh + gap) - gap
+        y = max(int(40 * app.theme.ui_scale), (h - total_h) // 2)
 
         def load_qtable_and_start() -> None:
             rect = pygame.Rect(0, 0, int(560 * app.theme.ui_scale), int(420 * app.theme.ui_scale))
@@ -118,24 +140,44 @@ class MainMenuScene:
         if not self.widgets:
             self._layout(app)
         w, h = screen.get_size()
-        if app.theme.ui_style == "pixel":
+        self._load_background(app)
+        if self._bg_image is not None:
             screen.fill(app.theme.palette.bg)
+            img_w, img_h = self._bg_image.get_size()
+            scale = min(w / img_w, h / img_h)
+            new_w = max(1, int(img_w * scale))
+            new_h = max(1, int(img_h * scale))
+            if self._bg_scaled is None or self._bg_scaled_size != (new_w, new_h):
+                self._bg_scaled = pygame.transform.smoothscale(self._bg_image, (new_w, new_h))
+                self._bg_scaled_size = (new_w, new_h)
+            x = (w - new_w) // 2
+            y = (h - new_h) // 2
+            screen.blit(self._bg_scaled, (x, y))
+            border_w = 2 if app.theme.ui_style == "pixel" else 3
+            pygame.draw.rect(screen, app.theme.palette.ok, pygame.Rect(x, y, new_w, new_h), border_w)
         else:
-            # Soft vertical gradient background
-            bg = pygame.Surface((w, h))
-            top = app.theme.palette.bg
-            bottom = app.theme.palette.grid0
-            for y in range(h):
-                t = y / max(1, h - 1)
-                c = tuple(int(top[i] * (1 - t) + bottom[i] * t) for i in range(3))
-                pygame.draw.line(bg, c, (0, y), (w, y))
-            screen.blit(bg, (0, 0))
+            if app.theme.ui_style == "pixel":
+                screen.fill(app.theme.palette.bg)
+            else:
+                # Soft vertical gradient background
+                bg = pygame.Surface((w, h))
+                top = app.theme.palette.bg
+                bottom = app.theme.palette.grid0
+                for y in range(h):
+                    t = y / max(1, h - 1)
+                    c = tuple(int(top[i] * (1 - t) + bottom[i] * t) for i in range(3))
+                    pygame.draw.line(bg, c, (0, y), (w, y))
+                screen.blit(bg, (0, 0))
         title_font = app.theme.font(int(app.theme.font_size_title * app.theme.ui_scale))
         subtitle_font = app.theme.font(int(app.theme.font_size * 0.85 * app.theme.ui_scale))
         title = title_font.render('Mini RL Survival', True, app.theme.palette.fg)
         subtitle = subtitle_font.render('Modular Pygame viewer + Q-learning', True, app.theme.palette.muted)
-        screen.blit(title, (w // 2 - title.get_width() // 2, int(80 * app.theme.ui_scale)))
-        screen.blit(subtitle, (w // 2 - subtitle.get_width() // 2, int(140 * app.theme.ui_scale)))
+        title_y = int(80 * app.theme.ui_scale)
+        subtitle_y = int(140 * app.theme.ui_scale)
+        shadow = title_font.render('Mini RL Survival', True, (0, 0, 0))
+        screen.blit(shadow, (w // 2 - shadow.get_width() // 2 + 2, title_y + 2))
+        screen.blit(title, (w // 2 - title.get_width() // 2, title_y))
+        screen.blit(subtitle, (w // 2 - subtitle.get_width() // 2, subtitle_y))
         line_y = int(190 * app.theme.ui_scale)
         pygame.draw.line(screen, app.theme.palette.grid_line, (int(w * 0.2), line_y), (int(w * 0.8), line_y), 2)
 

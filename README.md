@@ -1,14 +1,16 @@
 # Mini RL Survival
 
-A minimal, hackable tabular reinforcement learning project. The agent learns to navigate grid mazes with walls, food, and a goal using Q-learning. Everything is implemented from scratch for transparency and education.
+A minimal, hackable tabular reinforcement learning project. The agent learns to navigate grid mazes with walls, a key, and a door using Q-learning. Everything is implemented from scratch for transparency and education.
 
 ## Highlights
-- 50 curated preset mazes (plus random mode) with food and goal gating.
-- Goal tile unlocks only after the agent eats the fruit.
+- 50 curated preset mazes (plus random mode) with key and door gating.
+- Door unlocks only after the agent collects the key.
+- Difficulty modes (easy/medium/hard) adjust key and door spacing.
 - Interactive Pygame viewer with overlays, telemetry, and run history.
-- In-app training screen with curriculum mode and per-map success stats.
+- In-app training with curriculum and per-map success stats.
+- Guided "New Q-table" wizard for beginners.
 - Batch evaluate all maps and export per-map stats (JSON/CSV).
-- CLI training with curriculum flags for large-scale runs.
+- Optional 3D state-space visualization (PCA) for analysis.
 - Save/load Q-tables and environment snapshots.
 
 ## Requirements
@@ -27,6 +29,7 @@ From the menu you can:
 - Train in the Training tab
 - Load or save Q-tables
 - Change settings and visuals
+- Cycle menu backgrounds (Settings -> View)
 
 ## Training (CLI)
 Train a Q-table and save it:
@@ -66,9 +69,23 @@ The Training screen lets you:
 - Start/pause training
 - Enable curriculum mode and adjust its settings
 - View average reward/steps/foods and worst maps
+- Create a fresh Q-table with a guided wizard
 - Save/load Q-tables
 - Delete training artifacts (Q-tables, run stats, snapshots)
-- Export per-map stats and run batch “Test all maps”
+- Export per-map stats and run batch "Test all maps"
+
+## Guided New Q-table (Wizard)
+Training -> "New Q-table (guided)" walks you through environment and training
+settings, then asks for a filename before creating the new table.
+This avoids overwriting existing models and helps new users learn the options.
+
+## 3D State Space (Optional)
+From Training you can open the 3D view, or run the script directly:
+```sh
+python -m scripts.plot_state_space_3d --load data/qtable.pkl --mode state
+```
+You can filter by level, color by value or action, and limit points for speed.
+
 
 ## Key Controls (Simulation)
 - Space: Pause/Resume
@@ -94,6 +111,8 @@ Generated artifacts live in `data/`:
 - `env_snapshot.json`
 - `run_history.jsonl`
 - `run_stats.json` + `run_stats.csv`
+- `map_stats.json` (from "Test all maps")
+- `qtable_visualize.pkl` (auto-saved for 3D view)
 
 You can delete these from the Training tab to reset to a clean state.
 
@@ -101,6 +120,7 @@ You can delete these from the Training tab to reset to a clean state.
 - `core/` environment and Q-learning implementation
 - `viewers/` Pygame UI, scenes, overlays, and widgets
 - `scripts/` CLI tools (train, heatmap, utilities)
+- `scripts/plot_state_space_3d.py` 3D state-space visualization
 - `assets/` fonts, icons, and maze packs
 - `data/` generated artifacts (empty by default)
 
@@ -115,7 +135,7 @@ python scripts/fetch_maze_pack.py
 - If you see `ModuleNotFoundError`, use module mode:
   - `python -m scripts.train_agent`
   - `python -m viewers`
-- If the goal never appears: the goal unlocks only after food is collected.
+- If the door never appears: it unlocks only after the key is collected.
 
 ## Third-party assets
 - Kenney 1-Bit Pack (CC0) in `assets/1bitpack_kenney_1.1`

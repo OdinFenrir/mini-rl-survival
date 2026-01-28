@@ -46,6 +46,7 @@ class AppConfig:
     font_scale: float = 1.0
     reduced_motion: bool = False
     sound_enabled: bool = True
+    menu_background: str = "menu_background.png"
 
     # levels
     level_mode: str = "preset"
@@ -54,6 +55,7 @@ class AppConfig:
     n_walls: int = 18
     n_traps: int = 0
     food_enabled: bool = True
+    placement_difficulty: str = "medium"
 
     # io defaults (persist last used paths so the viewer is usable without retyping)
     qtable_path: str = os.path.join('data', 'qtable_saved.pkl')
@@ -74,6 +76,15 @@ class AppConfig:
     train_curriculum_eps_rewind: float = 0.5
     train_checkpoint_every: int = 500
     train_use_settings_for_play: bool = True
+
+    # visualization
+    viz_level_filter: int = -1  # -1 = all levels
+    viz_color: str = "value"
+    viz_size: str = "count"
+    viz_min_visits: int = 2
+    viz_max_points: int = 20000
+    viz_action_figure: bool = True
+    viz_level_feature: bool = False
 
 
 def load_config(path: str = CONFIG_PATH) -> AppConfig:
@@ -120,7 +131,7 @@ class App:
 
         pygame.init()
         pygame.display.set_caption('Mini RL Survival')
-        self.screen = pygame.display.set_mode((1800, 1080), pygame.RESIZABLE)
+        self.screen = pygame.display.set_mode((1920, 1080), pygame.RESIZABLE)
         self.clock = pygame.time.Clock()
         self.sfx = SfxManager(enabled=bool(self.cfg.sound_enabled))
         set_sfx_manager(self.sfx)

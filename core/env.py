@@ -127,6 +127,7 @@ class GridSurvivalEnv:
 		n_walls: int = 18,
 		n_traps: int | None = None,
 		food_enabled: bool = True,
+		placement_difficulty: str = "medium",
 	) -> None:
 		self.base_width = width
 		self.base_height = height
@@ -150,6 +151,7 @@ class GridSurvivalEnv:
 		else:
 			self.level_limit = int(level_limit)
 		self.food_enabled = bool(food_enabled)
+		self.placement_difficulty = str(placement_difficulty or "medium").lower()
 		self.food_collected = False
 		self.reward_shaping = str(reward_shaping)
 		self.shaping_strength = float(shaping_strength)
@@ -211,6 +213,29 @@ class GridSurvivalEnv:
 			return "Balanced maze"
 		return "Tight corridors"
 
+	def _difficulty_levels(self) -> tuple[float, float, float]:
+		mode = self.placement_difficulty
+		if mode == "hard":
+			return (0.55, 0.5, 0.45)
+		if mode == "easy":
+			return (0.25, 0.25, 0.2)
+		return (0.4, 0.35, 0.3)
+
+	def _min_start_goal_distance(self) -> int:
+		base = max(2, self.width + self.height - 2)
+		ratio, _, _ = self._difficulty_levels()
+		return max(4, int(base * ratio))
+
+	def _food_distance_targets(self, dist_start_goal: int | None) -> tuple[int, int]:
+		if dist_start_goal is None or dist_start_goal <= 0:
+			base = max(6, int((self.width + self.height) * 0.5))
+		else:
+			base = max(6, dist_start_goal)
+		_, r_start, r_goal = self._difficulty_levels()
+		min_start = max(2, int(base * r_start))
+		min_goal = max(2, int(base * r_goal))
+		return (min_start, min_goal)
+
 	def _place_food(self, start: Tuple[int, int], goal: Tuple[int, int], blocked: set, deterministic: bool) -> bool:
 		if not self.food_enabled:
 			self.food = (-1, -1)
@@ -238,18 +263,26 @@ class GridSurvivalEnv:
 			self.food = (-1, -1)
 			self.food_collected = True
 			return True
+		dist_start_goal = dist_start.get(goal)
+		min_start, min_goal = self._food_distance_targets(dist_start_goal)
+		filtered = [c for c in candidates if c[1] >= min_start and c[2] >= min_goal]
+		if not filtered:
+			filtered = [c for c in candidates if c[1] >= min_start]
+		if not filtered:
+			filtered = [c for c in candidates if c[2] >= min_goal]
+		if not filtered:
+			filtered = candidates
 		if deterministic:
-			dist_goal = dist_start.get(goal)
-			if dist_goal is None:
-				min_dist = 4
+			sorted_items = sorted(filtered, key=lambda item: (item[1] + item[2], item[1], item[2], item[0]))
+			mode = self.placement_difficulty
+			if mode == "hard":
+				choice = sorted_items[-1][0]
+			elif mode == "easy":
+				choice = sorted_items[0][0]
 			else:
-				min_dist = max(4, min(10, dist_goal + 2))
-			filtered = [c for c in candidates if c[1] >= min_dist]
-			if not filtered:
-				filtered = candidates
-			choice = min(filtered, key=lambda item: (item[1], item[2], item[0]))[0]
+				choice = sorted_items[len(sorted_items) // 2][0]
 		else:
-			choice = candidates[self._rng.randrange(len(candidates))][0]
+			choice = filtered[self._rng.randrange(len(filtered))][0]
 		self.food = choice
 		self.food_collected = False
 		return True
@@ -370,6 +403,7 @@ class GridSurvivalEnv:
 		self.level_desc = "Generated layout"
 		self.level_source = ""
 
+		min_goal_dist = self._min_start_goal_distance()
 		for _ in range(80):
 			occupied: set = set()
 			goal = self._random_empty_cell(occupied, self.width, self.height)
@@ -388,6 +422,9 @@ class GridSurvivalEnv:
 			start = self._random_empty_cell(occupied | walls | traps, self.width, self.height)
 			blocked = set(walls) | set(traps)
 			if self._path_exists(start, goal, blocked):
+				dist = self._reachable_distances(start, blocked).get(goal, 0)
+				if dist < min_goal_dist:
+					continue
 				self.walls = list(walls)
 				self.hazards = list(traps)
 				self.goal = goal

@@ -26,6 +26,14 @@ from viewers.scenes.render_context import RenderContext
 from viewers.ui.modals import FileDialogModal
 
 
+TILESET_INDICES = {
+    "hazard": 357,
+    "food": 393,   # candy bar
+    "agent": 168,
+    "goal": 507,   # door
+}
+
+
 def _normalize(hm: np.ndarray) -> np.ndarray:
     mx = float(hm.max()) if hm.size else 0.0
     mn = float(hm.min()) if hm.size else 0.0
@@ -82,6 +90,11 @@ class SimulationScene:
         self.last_reward = 0.0
         self.last_done = False
         self.last_info = {}
+        self._episode_banner = ""
+        self._episode_banner_sub = ""
+        self._episode_banner_timer = 0.0
+        self._pending_reset = False
+        self._pending_new_episode = False
 
         self._heat_cache_key = None
         self._heat_cache = None
@@ -204,6 +217,16 @@ class SimulationScene:
                     return sheet.subsurface(rect)
                 self._pixel_sprites["food"] = crop(2, 5)
                 self._pixel_sprites["agent"] = crop(1, 4)
+            custom_dir = os.path.join(base, "food_pixel_art", "Food Pixel Art")
+            custom_map = {
+                "food": "key.png",
+                "goal": "door.png",
+                "agent": "man.png",
+            }
+            for key, fname in custom_map.items():
+                path = os.path.join(custom_dir, fname)
+                if os.path.exists(path):
+                    self._pixel_sprites[key] = pygame.image.load(path).convert_alpha()
             cross_path = os.path.join(base, "kenney_game_icons", "PNG", "Black", "1x", "cross.png")
             if os.path.exists(cross_path):
                 self._pixel_sprites["hazard"] = pygame.image.load(cross_path).convert_alpha()
@@ -241,6 +264,7 @@ class SimulationScene:
             "n_walls": int(getattr(cfg, "n_walls", 18)),
             "n_traps": int(getattr(cfg, "n_traps", int(cfg.hazards))),
             "food_enabled": bool(getattr(cfg, "food_enabled", True)),
+            "placement_difficulty": str(getattr(cfg, "placement_difficulty", "medium")),
         }
         if self._env_overrides:
             env_kwargs.update(self._env_overrides)
@@ -379,6 +403,9 @@ class SimulationScene:
         self._set_agent_anim(self.env.agent, self.env.agent)
         self._heat_cache_key = None
         self._heat_cache = None
+        self._episode_banner_timer = 0.0
+        self._pending_reset = False
+        self._pending_new_episode = False
         app.toast.push('Episode reset')
 
     def _toggle_policy_mode(self, app) -> None:
@@ -586,6 +613,19 @@ class SimulationScene:
             self._shake_time = max(0.0, self._shake_time - dt)
         self._agent_render = self._agent_pos(dt)
 
+        if self._episode_banner_timer > 0.0:
+            self._episode_banner_timer = max(0.0, self._episode_banner_timer - dt)
+            if self._episode_banner_timer <= 0.0 and self._pending_reset:
+                self._pending_reset = False
+                self.obs = self.env.reset()
+                self._set_agent_anim(self.env.agent, self.env.agent)
+                self._heat_cache_key = None
+                self._heat_cache = None
+                if self._pending_new_episode:
+                    self.stats.new_episode()
+                    self._pending_new_episode = False
+            return
+
         steps = int(app.cfg.sim_steps_per_frame)
         if self.paused and not self.step_once:
             return
@@ -630,7 +670,6 @@ class SimulationScene:
                     if hasattr(app, "sfx"):
                         app.sfx.play("confirm")
                 self.telemetry_overlay.log_episode(ep.total_reward, ep.steps, ep.terminal)
-                self.stats.new_episode()
                 append_entry(
                     episode=ep.episode,
                     steps=ep.steps,
@@ -640,8 +679,14 @@ class SimulationScene:
                     timestamp=time.time(),
                 )
                 self.run_history_overlay.reload()
-                self.obs = self.env.reset()
-                self._set_agent_anim(self.env.agent, self.env.agent)
+                if ep.terminal == "goal":
+                    self._episode_banner = "COMPLETE"
+                else:
+                    self._episode_banner = "FAIL"
+                self._episode_banner_sub = ep.terminal
+                self._episode_banner_timer = 1.2
+                self._pending_reset = True
+                self._pending_new_episode = True
             else:
                 self.obs = res.obs
 
@@ -857,14 +902,17 @@ class SimulationScene:
             hazard_sprite = self._pixel_sprite("hazard", sprite_scale)
             food_sprite = self._pixel_sprite("food", sprite_scale)
             agent_sprite = self._pixel_sprite("agent", sprite_scale)
+            goal_sprite = self._pixel_sprite("goal", sprite_scale)
         elif use_tiles:
-            hazard_sprite = self._tile_surface(357, sprite_scale)
-            food_sprite = self._tile_surface(371, sprite_scale)
-            agent_sprite = self._tile_surface(168, sprite_scale)
+            hazard_sprite = self._tile_surface(TILESET_INDICES["hazard"], sprite_scale)
+            food_sprite = self._pixel_sprite("food", sprite_scale) or self._tile_surface(TILESET_INDICES["food"], sprite_scale)
+            agent_sprite = self._pixel_sprite("agent", sprite_scale) or self._tile_surface(TILESET_INDICES["agent"], sprite_scale)
+            goal_sprite = self._pixel_sprite("goal", sprite_scale) or self._tile_surface(TILESET_INDICES["goal"], sprite_scale)
         else:
             hazard_sprite = None
-            food_sprite = None
-            agent_sprite = None
+            food_sprite = self._pixel_sprite("food", sprite_scale)
+            agent_sprite = self._pixel_sprite("agent", sprite_scale)
+            goal_sprite = self._pixel_sprite("goal", sprite_scale)
 
         def blit_center(surface: pygame.Surface, sprite: pygame.Surface, center: tuple[int, int]) -> None:
             surface.blit(sprite, (center[0] - sprite.get_width() // 2, center[1] - sprite.get_height() // 2))
@@ -891,7 +939,9 @@ class SimulationScene:
         gcx, gcy = rc_local.cell_center(gx, gy)
         goal_visible = (not getattr(self.env, "food_enabled", True)) or bool(getattr(self.env, "food_collected", False))
         if goal_visible:
-            if pixel_style:
+            if goal_sprite:
+                blit_center(board_surface, goal_sprite, (gcx, gcy))
+            elif pixel_style:
                 gr = rc_local.cell_rect(gx, gy)
                 pygame.draw.rect(board_surface, app.theme.palette.warn, gr, border_radius=0)
                 pygame.draw.rect(board_surface, app.theme.palette.grid_line, gr, width=2)
@@ -1013,3 +1063,33 @@ class SimulationScene:
         if self.show_telemetry:
             pad = int(12 * app.theme.ui_scale)
             self.telemetry_overlay.render(screen, app.theme, pos=(board_rect.x + pad, board_rect.y + pad))
+
+        if self._episode_banner_timer > 0.0:
+            scale = float(app.theme.ui_scale)
+            dim = pygame.Surface(board_rect.size, pygame.SRCALPHA)
+            dim.fill((0, 0, 0, 140))
+            screen.blit(dim, board_rect.topleft)
+
+            title_font = app.theme.font(int(app.theme.font_size_title * 0.6 * scale))
+            sub_font = app.theme.font(int(app.theme.font_size * 0.85 * scale))
+            title = self._episode_banner or "DONE"
+            sub = self._episode_banner_sub or ""
+            title_color = app.theme.palette.ok if title == "COMPLETE" else app.theme.palette.danger
+            title_surf = title_font.render(title, True, title_color)
+            sub_surf = sub_font.render(sub, True, app.theme.palette.muted) if sub else None
+            pad = int(24 * scale)
+            box_w = max(int(260 * scale), title_surf.get_width() + pad * 2)
+            box_h = title_surf.get_height() + pad * 2
+            if sub_surf:
+                box_h += sub_surf.get_height() + int(8 * scale)
+                box_w = max(box_w, sub_surf.get_width() + pad * 2)
+            box = pygame.Rect(0, 0, box_w, box_h)
+            box.center = board_rect.center
+            if app.theme.ui_style == "pixel":
+                pygame.draw.rect(screen, app.theme.palette.panel, box)
+                pygame.draw.rect(screen, app.theme.palette.grid_line, box, width=2)
+            else:
+                app.theme.draw_gradient_panel(screen, box, app.theme.palette.panel, app.theme.palette.grid1, border_radius=int(14 * scale))
+            screen.blit(title_surf, (box.centerx - title_surf.get_width() // 2, box.y + pad))
+            if sub_surf:
+                screen.blit(sub_surf, (box.centerx - sub_surf.get_width() // 2, box.y + pad + title_surf.get_height() + int(8 * scale)))

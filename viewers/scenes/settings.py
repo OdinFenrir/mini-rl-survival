@@ -10,8 +10,9 @@ from viewers.ui.widgets import Button, Slider, Toggle, FocusManager, Label
 
 
 class SettingsScene:
-    def __init__(self) -> None:
+    def __init__(self, mode: str = "general") -> None:
         self.focus = FocusManager()
+        self.mode = mode
 
         # Scrolling state
         self.scroll_y = 0
@@ -28,9 +29,10 @@ class SettingsScene:
         w, h = app.screen.get_size()
         scale = float(app.theme.ui_scale)
 
-        x = int(60 * scale)
+        margin = int(60 * scale)
         y0 = int(90 * scale)
-        ww = w - 2 * x
+        ww = min(w - 2 * margin, int(980 * scale))
+        x = max(0, (w - ww) // 2)
 
         font = app.theme.font(int(app.theme.font_size * app.theme.ui_scale))
         label_h = font.get_height()
@@ -51,172 +53,251 @@ class SettingsScene:
             return pygame.Rect(x, y0 + i * (row_h + gap), ww, row_h)
 
         cfg = app.cfg
+        show_training = self.mode in ("training", "all")
+        show_general = self.mode in ("general", "all")
         items: list = []
         i = 0
 
-        items.append(Label(rect(i), "Environment")); i += 1
-        items.append(Slider(rect(i), "Grid width", 4, 40, 1,
-                            lambda: float(cfg.w), lambda v: setattr(cfg, "w", int(v)), fmt="{:.0f}")); i += 1
-        items.append(Slider(rect(i), "Grid height", 4, 40, 1,
-                            lambda: float(cfg.h), lambda v: setattr(cfg, "h", int(v)), fmt="{:.0f}")); i += 1
-        def set_energy_start(v: float) -> None:
-            v = int(v)
-            setattr(cfg, "energy_start", v)
-            if int(getattr(cfg, "energy_max", 0)) > 0 and v > int(getattr(cfg, "energy_max", 0)):
-                setattr(cfg, "energy_max", v)
-
-        items.append(Slider(rect(i), "Energy start", 1, 120, 1,
-                            lambda: float(cfg.energy_start), set_energy_start, fmt="{:.0f}")); i += 1
-        items.append(Slider(rect(i), "Energy max (0=unlimited)", 0, 200, 1,
-                            lambda: float(getattr(cfg, "energy_max", 0)),
-                            lambda v: setattr(cfg, "energy_max", int(v)), fmt="{:.0f}")); i += 1
-        items.append(Slider(rect(i), "Energy food gain", 1, 120, 1,
-                            lambda: float(cfg.energy_food), lambda v: setattr(cfg, "energy_food", int(v)), fmt="{:.0f}")); i += 1
-        items.append(Slider(rect(i), "Energy step cost", 1, 20, 1,
-                            lambda: float(cfg.energy_step), lambda v: setattr(cfg, "energy_step", int(v)), fmt="{:.0f}")); i += 1
-
-        level_count = GridSurvivalEnv.preset_level_count()
-        level_template = GridSurvivalEnv.get_level_template(int(cfg.level_index) % max(1, level_count)) if level_count else {}
-        level_name = level_template.get("name", "Preset level")
-        level_desc = level_template.get("desc", "")
-        level_source = level_template.get("source", "")
-        level_layout = level_template.get("layout", []) or []
-        if level_layout:
-            level_w = max(len(line) for line in level_layout)
-            level_h = len(level_layout)
-            walls = sum(line.count("#") for line in level_layout)
-            total = max(1, level_w * level_h)
-            ratio = walls / total
-            if ratio < 0.28:
-                level_style = "Open paths"
-            elif ratio < 0.42:
-                level_style = "Balanced maze"
-            else:
-                level_style = "Tight corridors"
-        else:
-            level_w, level_h = cfg.w, cfg.h
-            level_style = ""
-
-        items.append(Label(rect(i), "Levels")); i += 1
-        items.append(Label(rect(i), f"Preset: {level_name}")); i += 1
-        items.append(Label(rect(i), f"Size: {level_w}x{level_h}")); i += 1
-        if level_style:
-            items.append(Label(rect(i), f"Style: {level_style}")); i += 1
-        if level_desc:
-            items.append(Label(rect(i), level_desc)); i += 1
-        if level_source:
-            items.append(Label(rect(i), f"Source: {level_source}")); i += 1
-
-        def cycle_level_mode():
-            modes = ["preset", "random"]
-            cur = cfg.level_mode if cfg.level_mode in modes else "preset"
-            cfg.level_mode = modes[(modes.index(cur) + 1) % len(modes)]
-            app.toast.push(f"Level mode: {cfg.level_mode}")
-
-        items.append(Button(rect(i), f"Level mode: {cfg.level_mode} (click to cycle)", cycle_level_mode)); i += 1
-        max_level = max(0, level_count - 1)
-        items.append(Slider(rect(i), "Level index", 0, max(0, max_level), 1,
-                            lambda: float(cfg.level_index),
-                            lambda v: setattr(cfg, "level_index", int(v)), fmt="{:.0f}")); i += 1
-        items.append(Toggle(rect(i), "Cycle levels",
-                            lambda: bool(getattr(cfg, "level_cycle", True)),
-                            lambda b: setattr(cfg, "level_cycle", bool(b)))); i += 1
-        items.append(Slider(rect(i), "Random walls", 0, 120, 1,
-                            lambda: float(getattr(cfg, "n_walls", 18)),
-                            lambda v: setattr(cfg, "n_walls", int(v)), fmt="{:.0f}")); i += 1
-        items.append(Toggle(rect(i), "Bonus food",
-                            lambda: bool(getattr(cfg, "food_enabled", True)),
-                            lambda b: setattr(cfg, "food_enabled", bool(b)))); i += 1
-
-        items.append(Label(rect(i), "Agent")); i += 1
-        items.append(Slider(rect(i), "Alpha", 0.01, 1.0, 0.01,
-                            lambda: float(cfg.alpha), lambda v: setattr(cfg, "alpha", float(v)))); i += 1
-        items.append(Slider(rect(i), "Gamma", 0.50, 0.999, 0.001,
-                            lambda: float(cfg.gamma), lambda v: setattr(cfg, "gamma", float(v)))); i += 1
-        items.append(Slider(rect(i), "Eps start", 0.0, 1.0, 0.01,
-                            lambda: float(cfg.eps_start), lambda v: setattr(cfg, "eps_start", float(v)))); i += 1
-        items.append(Slider(rect(i), "Eps end", 0.0, 1.0, 0.01,
-                            lambda: float(cfg.eps_end), lambda v: setattr(cfg, "eps_end", float(v)))); i += 1
-        items.append(Slider(rect(i), "Eps decay steps", 100, 300000, 100,
-                            lambda: float(cfg.eps_decay), lambda v: setattr(cfg, "eps_decay", int(v)), fmt="{:.0f}")); i += 1
-
-        items.append(Label(rect(i), "View")); i += 1
-        items.append(Slider(rect(i), "Render FPS", 10, 240, 1,
-                            lambda: float(cfg.render_fps), lambda v: setattr(cfg, "render_fps", int(v)), fmt="{:.0f}")); i += 1
-        items.append(Slider(rect(i), "Sim steps/frame", 1, 60, 1,
-                            lambda: float(cfg.sim_steps_per_frame), lambda v: setattr(cfg, "sim_steps_per_frame", int(v)), fmt="{:.0f}")); i += 1
-        items.append(Slider(rect(i), "Font scale", 0.8, 1.8, 0.05,
-                            lambda: float(cfg.font_scale), lambda v: setattr(cfg, "font_scale", float(v)))); i += 1
-        items.append(Toggle(rect(i), "Sound effects",
-                            lambda: bool(getattr(cfg, "sound_enabled", True)),
-                            lambda b: setattr(cfg, "sound_enabled", bool(b)))); i += 1
-        items.append(Toggle(rect(i), "Reduced motion",
-                            lambda: bool(cfg.reduced_motion), lambda b: setattr(cfg, "reduced_motion", bool(b)))); i += 1
-
-        def cycle_color():
-            modes = ["neo", "pixel", "default", "colorblind", "high_contrast"]
-            cur = cfg.color_mode if cfg.color_mode in modes else "default"
-            cfg.color_mode = modes[(modes.index(cur) + 1) % len(modes)]
+        def apply_theme(rebuild: bool = False) -> None:
+            prev_scale = float(app.theme.ui_scale)
+            prev_mode = str(app.theme.ui_style)
             app.apply_theme_from_config()
-            app.toast.push(f"Theme: {cfg.color_mode}")
+            if rebuild or float(app.theme.ui_scale) != prev_scale or str(app.theme.ui_style) != prev_mode:
+                self._layout(app)
 
-        items.append(Button(rect(i), f"Theme preset: {cfg.color_mode} (click to cycle)", cycle_color)); i += 1
-        items.append(Slider(rect(i), "Heatmap opacity", 0.1, 1.0, 0.05,
-                            lambda: float(getattr(cfg, "heatmap_opacity", 0.7)),
-                            lambda v: setattr(cfg, "heatmap_opacity", float(v)), fmt="{:.2f}")); i += 1
+        if show_training:
+            items.append(Label(rect(i), "Environment")); i += 1
+            items.append(Slider(rect(i), "Grid width", 4, 40, 1,
+                                lambda: float(cfg.w), lambda v: setattr(cfg, "w", int(v)), fmt="{:.0f}")); i += 1
+            items.append(Slider(rect(i), "Grid height", 4, 40, 1,
+                                lambda: float(cfg.h), lambda v: setattr(cfg, "h", int(v)), fmt="{:.0f}")); i += 1
 
-        items.append(Label(rect(i), "Data")); i += 1
+            def set_energy_start(v: float) -> None:
+                v = int(v)
+                setattr(cfg, "energy_start", v)
+                if int(getattr(cfg, "energy_max", 0)) > 0 and v > int(getattr(cfg, "energy_max", 0)):
+                    setattr(cfg, "energy_max", v)
 
-        def clear_run_history() -> None:
-            path = os.path.join("data", "run_history.jsonl")
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-                app.toast.push("Run history cleared")
-            except Exception as exc:
-                app.toast.push(f"Clear failed: {exc}")
+            items.append(Slider(rect(i), "Energy start", 1, 120, 1,
+                                lambda: float(cfg.energy_start), set_energy_start, fmt="{:.0f}")); i += 1
+            items.append(Slider(rect(i), "Energy max (0=unlimited)", 0, 200, 1,
+                                lambda: float(getattr(cfg, "energy_max", 0)),
+                                lambda v: setattr(cfg, "energy_max", int(v)), fmt="{:.0f}")); i += 1
+            items.append(Slider(rect(i), "Energy food gain", 1, 120, 1,
+                                lambda: float(cfg.energy_food), lambda v: setattr(cfg, "energy_food", int(v)), fmt="{:.0f}")); i += 1
+            items.append(Slider(rect(i), "Energy step cost", 1, 20, 1,
+                                lambda: float(cfg.energy_step), lambda v: setattr(cfg, "energy_step", int(v)), fmt="{:.0f}")); i += 1
 
-        def confirm_clear_run_history() -> None:
-            rect = pygame.Rect(0, 0, int(420 * scale), int(200 * scale))
-            rect.center = app.screen.get_rect().center
-            modal = ConfirmDialog(
-                rect,
-                "Clear run history",
-                "This will delete data/run_history.jsonl",
-                on_confirm=clear_run_history,
-                on_cancel=lambda: None,
-            )
-            app.push_modal(modal)
+            level_count = GridSurvivalEnv.preset_level_count()
+            level_template = GridSurvivalEnv.get_level_template(int(cfg.level_index) % max(1, level_count)) if level_count else {}
+            level_name = level_template.get("name", "Preset level")
+            level_desc = level_template.get("desc", "")
+            level_source = level_template.get("source", "")
+            level_layout = level_template.get("layout", []) or []
+            if level_layout:
+                level_w = max(len(line) for line in level_layout)
+                level_h = len(level_layout)
+                walls = sum(line.count("#") for line in level_layout)
+                total = max(1, level_w * level_h)
+                ratio = walls / total
+                if ratio < 0.28:
+                    level_style = "Open paths"
+                elif ratio < 0.42:
+                    level_style = "Balanced maze"
+                else:
+                    level_style = "Tight corridors"
+            else:
+                level_w, level_h = cfg.w, cfg.h
+                level_style = ""
 
-        items.append(Button(rect(i), "Clear run history", confirm_clear_run_history)); i += 1
+            items.append(Label(rect(i), "Levels")); i += 1
+            def cycle_difficulty() -> None:
+                modes = ["easy", "medium", "hard"]
+                cur = str(getattr(cfg, "placement_difficulty", "medium")).lower()
+                if cur not in modes:
+                    cur = "medium"
+                cfg.placement_difficulty = modes[(modes.index(cur) + 1) % len(modes)]
+                app.toast.push(f"Difficulty: {cfg.placement_difficulty}")
+                self._layout(app)
+
+            items.append(Button(rect(i), f"Difficulty: {getattr(cfg, 'placement_difficulty', 'medium')}", cycle_difficulty)); i += 1
+            items.append(Label(rect(i), f"Preset: {level_name}")); i += 1
+            items.append(Label(rect(i), f"Size: {level_w}x{level_h}")); i += 1
+            if level_style:
+                items.append(Label(rect(i), f"Style: {level_style}")); i += 1
+            if level_desc:
+                items.append(Label(rect(i), level_desc)); i += 1
+            if level_source:
+                items.append(Label(rect(i), f"Source: {level_source}")); i += 1
+
+            def cycle_level_mode() -> None:
+                modes = ["preset", "random"]
+                cur = cfg.level_mode if cfg.level_mode in modes else "preset"
+                cfg.level_mode = modes[(modes.index(cur) + 1) % len(modes)]
+                app.toast.push(f"Level mode: {cfg.level_mode}")
+
+            items.append(Button(rect(i), f"Level mode: {cfg.level_mode} (click to cycle)", cycle_level_mode)); i += 1
+            max_level = max(0, level_count - 1)
+            items.append(Slider(rect(i), "Level index", 0, max(0, max_level), 1,
+                                lambda: float(cfg.level_index),
+                                lambda v: setattr(cfg, "level_index", int(v)), fmt="{:.0f}")); i += 1
+            items.append(Toggle(rect(i), "Cycle levels",
+                                lambda: bool(getattr(cfg, "level_cycle", True)),
+                                lambda b: setattr(cfg, "level_cycle", bool(b)))); i += 1
+            items.append(Slider(rect(i), "Random walls", 0, 120, 1,
+                                lambda: float(getattr(cfg, "n_walls", 18)),
+                                lambda v: setattr(cfg, "n_walls", int(v)), fmt="{:.0f}")); i += 1
+            items.append(Toggle(rect(i), "Bonus food",
+                                lambda: bool(getattr(cfg, "food_enabled", True)),
+                                lambda b: setattr(cfg, "food_enabled", bool(b)))); i += 1
+
+            items.append(Label(rect(i), "Agent")); i += 1
+            items.append(Slider(rect(i), "Alpha", 0.01, 1.0, 0.01,
+                                lambda: float(cfg.alpha), lambda v: setattr(cfg, "alpha", float(v)))); i += 1
+            items.append(Slider(rect(i), "Gamma", 0.50, 0.999, 0.001,
+                                lambda: float(cfg.gamma), lambda v: setattr(cfg, "gamma", float(v)))); i += 1
+            items.append(Slider(rect(i), "Eps start", 0.0, 1.0, 0.01,
+                                lambda: float(cfg.eps_start), lambda v: setattr(cfg, "eps_start", float(v)))); i += 1
+            items.append(Slider(rect(i), "Eps end", 0.0, 1.0, 0.01,
+                                lambda: float(cfg.eps_end), lambda v: setattr(cfg, "eps_end", float(v)))); i += 1
+            items.append(Slider(rect(i), "Eps decay steps", 100, 300000, 100,
+                                lambda: float(cfg.eps_decay), lambda v: setattr(cfg, "eps_decay", int(v)), fmt="{:.0f}")); i += 1
+
+        if show_general:
+            items.append(Label(rect(i), "View")); i += 1
+            items.append(Slider(rect(i), "Render FPS", 10, 240, 1,
+                                lambda: float(cfg.render_fps), lambda v: setattr(cfg, "render_fps", int(v)), fmt="{:.0f}")); i += 1
+            items.append(Slider(rect(i), "Sim steps/frame", 1, 60, 1,
+                                lambda: float(cfg.sim_steps_per_frame), lambda v: setattr(cfg, "sim_steps_per_frame", int(v)), fmt="{:.0f}")); i += 1
+
+            def set_font_scale(v: float) -> None:
+                cfg.font_scale = float(v)
+                apply_theme(rebuild=True)
+
+            items.append(Slider(rect(i), "Font scale", 0.8, 1.8, 0.05,
+                                lambda: float(cfg.font_scale), set_font_scale, fmt="{:.2f}")); i += 1
+
+            def set_sound(b: bool) -> None:
+                cfg.sound_enabled = bool(b)
+                apply_theme()
+
+            items.append(Toggle(rect(i), "Sound effects",
+                                lambda: bool(getattr(cfg, "sound_enabled", True)), set_sound)); i += 1
+
+            def set_reduced_motion(b: bool) -> None:
+                cfg.reduced_motion = bool(b)
+                apply_theme()
+
+            items.append(Toggle(rect(i), "Reduced motion",
+                                lambda: bool(cfg.reduced_motion), set_reduced_motion)); i += 1
+
+            def cycle_color() -> None:
+                modes = ["neo", "pixel", "default", "colorblind", "high_contrast"]
+                cur = cfg.color_mode if cfg.color_mode in modes else "default"
+                cfg.color_mode = modes[(modes.index(cur) + 1) % len(modes)]
+                apply_theme(rebuild=True)
+                app.toast.push(f"Theme: {cfg.color_mode}")
+
+            items.append(Button(rect(i), f"Theme preset: {cfg.color_mode} (click to cycle)", cycle_color)); i += 1
+
+            def list_menu_backgrounds() -> list[str]:
+                base = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "assets"))
+                candidates = [
+                    "menu_background.png",
+                    "menu_background2.png",
+                    "menu_background3.png",
+                ]
+                return [name for name in candidates if os.path.exists(os.path.join(base, name))]
+
+            def cycle_menu_background() -> None:
+                options = list_menu_backgrounds()
+                if not options:
+                    app.toast.push("No menu backgrounds found")
+                    return
+                cur = cfg.menu_background if cfg.menu_background in options else options[0]
+                idx = options.index(cur)
+                cfg.menu_background = options[(idx + 1) % len(options)]
+                app.toast.push(f"Menu background: {cfg.menu_background}")
+                self._layout(app)
+
+            options = list_menu_backgrounds()
+            if options:
+                cur = cfg.menu_background if cfg.menu_background in options else options[0]
+                idx = options.index(cur) + 1
+                label = f"Menu background: {idx}/{len(options)} (click to cycle)"
+            else:
+                label = "Menu background: none found"
+            items.append(Button(rect(i), label, cycle_menu_background)); i += 1
+            items.append(Slider(rect(i), "Heatmap opacity", 0.1, 1.0, 0.05,
+                                lambda: float(getattr(cfg, "heatmap_opacity", 0.7)),
+                                lambda v: setattr(cfg, "heatmap_opacity", float(v)), fmt="{:.2f}")); i += 1
+
+            items.append(Label(rect(i), "Data")); i += 1
+
+        if show_general:
+            def clear_run_history() -> None:
+                path = os.path.join("data", "run_history.jsonl")
+                try:
+                    if os.path.exists(path):
+                        os.remove(path)
+                    app.toast.push("Run history cleared")
+                except Exception as exc:
+                    app.toast.push(f"Clear failed: {exc}")
+
+            def confirm_clear_run_history() -> None:
+                rect = pygame.Rect(0, 0, int(420 * scale), int(200 * scale))
+                rect.center = app.screen.get_rect().center
+                modal = ConfirmDialog(
+                    rect,
+                    "Clear run history",
+                    "This will delete data/run_history.jsonl",
+                    on_confirm=clear_run_history,
+                    on_cancel=lambda: None,
+                )
+                app.push_modal(modal)
+
+            items.append(Button(rect(i), "Clear run history", confirm_clear_run_history)); i += 1
 
         # Footer buttons (fixed)
         bw = int(220 * scale)
         bh = int(56 * scale)
         gap2 = int(14 * scale)
-        bx = (w - (3 * bw + 2 * gap2)) // 2
         by = footer_y + (footer_h - bh) // 2
 
-        def apply():
-            prev_scale = float(app.theme.ui_scale)
-            prev_mode = str(app.theme.ui_style)
-            app.apply_theme_from_config()
-            app.toast.push("Settings applied")
-            if float(app.theme.ui_scale) != prev_scale or str(app.theme.ui_style) != prev_mode:
-                self._layout(app)
-
-        def defaults():
+        def defaults_all() -> None:
             from viewers.app import AppConfig
             app.cfg = AppConfig()
             app.apply_theme_from_config()
             app.toast.push("Restored defaults")
             self._layout(app)  # rebuild with defaults
 
-        footer = [
-            Button(pygame.Rect(bx + 0 * (bw + gap2), by, bw, bh), "Apply", apply),
-            Button(pygame.Rect(bx + 1 * (bw + gap2), by, bw, bh), "Defaults", defaults),
-            Button(pygame.Rect(bx + 2 * (bw + gap2), by, bw, bh), "Back", lambda: app.pop()),
-        ]
+        def defaults_training() -> None:
+            from viewers.app import AppConfig
+            defaults = AppConfig()
+            for name in (
+                "w", "h", "hazards", "energy_start", "energy_food", "energy_step", "energy_max", "seed",
+                "level_mode", "level_index", "level_cycle", "n_walls", "n_traps", "food_enabled",
+                "placement_difficulty",
+                "alpha", "gamma", "eps_start", "eps_end", "eps_decay",
+            ):
+                setattr(app.cfg, name, getattr(defaults, name))
+            app.toast.push("Training defaults restored")
+            self._layout(app)
+
+        buttons: list[Button] = []
+        if show_training and not show_general:
+            buttons.append(Button(pygame.Rect(0, 0, bw, bh), "Reset training defaults", defaults_training))
+            buttons.append(Button(pygame.Rect(0, 0, bw, bh), "Back", lambda: app.pop()))
+        else:
+            buttons.append(Button(pygame.Rect(0, 0, bw, bh), "Defaults", defaults_all))
+            buttons.append(Button(pygame.Rect(0, 0, bw, bh), "Back", lambda: app.pop()))
+
+        total_w = len(buttons) * bw + max(0, len(buttons) - 1) * gap2
+        bx = (w - total_w) // 2
+        for idx, btn in enumerate(buttons):
+            btn.rect = pygame.Rect(bx + idx * (bw + gap2), by, bw, bh)
+
+        footer = buttons
 
         # Store + compute scroll bounds
         self.content_widgets = items
@@ -344,7 +425,8 @@ class SettingsScene:
         screen.fill(app.theme.palette.bg)
 
         title_font = app.theme.font(int(app.theme.font_size_title * 0.55 * app.theme.ui_scale))
-        title = title_font.render("Settings", True, app.theme.palette.fg)
+        title_text = "Training Settings" if self.mode == "training" else "Settings"
+        title = title_font.render(title_text, True, app.theme.palette.fg)
         screen.blit(title, (int(60 * app.theme.ui_scale), int(30 * app.theme.ui_scale)))
 
         # Draw scroll area clip

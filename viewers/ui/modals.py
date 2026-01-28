@@ -3,6 +3,7 @@ import os
 from typing import Callable, Optional
 
 import pygame
+from .widgets import Button, Slider, Toggle, FocusManager
 
 class Modal:
     def __init__(self, rect: pygame.Rect, title: str, on_close: Optional[Callable]=None):
@@ -286,7 +287,6 @@ class ConfirmDialog(Modal):
                 self.close()
                 return
             if cancel_rect.collidepoint(mx, my):
-                self.on_cancel()
                 self.close()
                 return
         if event.type == pygame.KEYDOWN:
@@ -295,8 +295,6 @@ class ConfirmDialog(Modal):
             elif event.key == pygame.K_RETURN:
                 if self.focus == 0:
                     self.on_confirm()
-                else:
-                    self.on_cancel()
                 self.close()
             elif event.key == pygame.K_ESCAPE:
                 self.close()
@@ -318,4 +316,246 @@ class ConfirmDialog(Modal):
             pygame.draw.rect(screen, color, btn_rect, border_radius=6)
             lbl_surf = font.render(label, True, theme.palette.fg)
             screen.blit(lbl_surf, (btn_rect.x + 16, btn_rect.y + 8))
+
+
+class TrainingSetupWizard(Modal):
+    def __init__(self, rect, cfg, on_apply, on_cancel):
+        super().__init__(rect, "New Q-table (guided)", on_close=on_cancel)
+        self.cfg = cfg
+        self.on_apply = on_apply
+        self._step = 0
+        self._steps = ["intro", "env", "train", "curriculum", "summary"]
+        self._widgets: list = []
+        self._lines: list[str] = []
+        self._focus = FocusManager()
+        self._dirty = True
+        self._last_scale = 1.0
+        self._show_warnings = False
+        self._preset_mode = "advanced"
+
+    def _lines_for_step(self) -> list[str]:
+        if self._steps[self._step] == "intro":
+            return [
+                "This wizard helps you create a fresh Q-table.",
+                "We will configure environment + training settings step by step.",
+                "Use Tab/Up/Down to navigate. Esc cancels.",
+            ]
+        if self._steps[self._step] == "env":
+            return [
+                "Environment settings: make the maze and rewards.",
+                "Tip: Easy = closer key/door, Hard = farther spacing.",
+            ]
+        if self._steps[self._step] == "train":
+            return [
+                "Training settings: how long to train and how often to evaluate.",
+            ]
+        if self._steps[self._step] == "curriculum":
+            return [
+                "Curriculum gradually unlocks more maps as the agent improves.",
+                "Turn it ON to train across all preset maps faster.",
+            ]
+        energy_max = getattr(self.cfg, "energy_max", 0)
+        energy_max_label = "∞" if not energy_max else str(int(energy_max))
+        return [
+            "Summary: these settings will be applied.",
+            f"Grid: {int(self.cfg.w)}x{int(self.cfg.h)}  Walls: {int(getattr(self.cfg, 'n_walls', 0))}",
+            f"Energy: start {int(self.cfg.energy_start)}  max {energy_max_label}  food +{int(self.cfg.energy_food)}",
+            f"Train: {int(self.cfg.train_episodes)} eps  max steps {int(self.cfg.train_max_steps)}  eval {int(self.cfg.train_eval_every)}",
+            f"Curriculum: {'ON' if bool(getattr(self.cfg, 'train_curriculum', False)) else 'OFF'}  Difficulty: {getattr(self.cfg, 'placement_difficulty', 'medium')}",
+            "Click Create to reset training and start with a fresh Q-table.",
+        ]
+
+    def _warnings(self) -> list[str]:
+        warnings: list[str] = []
+        energy_max = int(getattr(self.cfg, "energy_max", 0) or 0)
+        if energy_max and energy_max < int(self.cfg.energy_start):
+            warnings.append("Energy max is lower than energy start; it will clamp.")
+        if int(self.cfg.energy_food) < int(self.cfg.energy_step):
+            warnings.append("Food gain is lower than step cost; food may feel weak.")
+        min_energy_hint = max(6, int((int(self.cfg.w) + int(self.cfg.h)) * 0.5))
+        if int(self.cfg.energy_start) < min_energy_hint:
+            warnings.append("Energy start is low for this maze size; may time out.")
+        if int(getattr(self.cfg, "train_episodes", 0)) < 500:
+            warnings.append("Very few episodes; learning may look random.")
+        return warnings
+
+    def _apply_beginner_preset(self) -> None:
+        self._preset_mode = "beginner"
+        self.cfg.train_curriculum = True
+        self.cfg.train_curriculum_start = 5
+        self.cfg.train_curriculum_step = 5
+        self.cfg.train_curriculum_window = 50
+        self.cfg.train_curriculum_threshold = 0.8
+        self.cfg.train_curriculum_eps_rewind = 0.5
+        self.cfg.energy_start = 60
+        self.cfg.energy_max = 80
+        self.cfg.energy_food = 30
+        self.cfg.train_eval_every = 0
+        self.cfg.train_speed = 20
+        self.cfg.train_episodes = 20000
+        self.cfg.placement_difficulty = "medium"
+        self._dirty = True
+
+    def _apply_advanced_preset(self) -> None:
+        self._preset_mode = "advanced"
+        self._dirty = True
+
+    def _layout(self, theme) -> None:
+        scale = float(theme.ui_scale or 1.0)
+        if not self._dirty and abs(scale - self._last_scale) < 1e-3:
+            return
+        self._last_scale = scale
+        self._dirty = False
+        pad = int(18 * scale)
+        content_left = self.rect.x + pad
+        content_top = self.rect.y + int(56 * scale)
+        content_w = self.rect.w - 2 * pad
+        row_h = int(46 * scale)
+        gap = int(10 * scale)
+        font = theme.font(int(theme.font_size * theme.ui_scale))
+        line_h = font.get_height()
+
+        self._lines = self._lines_for_step()
+        text_h = len(self._lines) * (line_h + int(4 * scale)) + int(8 * scale)
+        y0 = content_top + text_h
+
+        def rect_row(i: int) -> pygame.Rect:
+            return pygame.Rect(content_left, y0 + i * (row_h + gap), content_w, row_h)
+
+        self._widgets = []
+        i = 0
+        step = self._steps[self._step]
+
+        if step == "intro":
+            self._widgets.append(Button(rect_row(i), "Beginner preset (recommended)", self._apply_beginner_preset)); i += 1
+            self._widgets.append(Button(rect_row(i), "Advanced (manual settings)", self._apply_advanced_preset)); i += 1
+
+        if step == "env":
+            def cycle_diff() -> None:
+                modes = ["easy", "medium", "hard"]
+                cur = str(getattr(self.cfg, "placement_difficulty", "medium")).lower()
+                if cur not in modes:
+                    cur = "medium"
+                self.cfg.placement_difficulty = modes[(modes.index(cur) + 1) % len(modes)]
+                self._dirty = True
+
+            self._widgets.append(Button(rect_row(i), f"Difficulty: {getattr(self.cfg, 'placement_difficulty', 'medium')}", cycle_diff)); i += 1
+            self._widgets.append(Slider(rect_row(i), "Grid width", 4, 40, 1,
+                                        lambda: float(self.cfg.w), lambda v: setattr(self.cfg, "w", int(v)), fmt="{:.0f}")); i += 1
+            self._widgets.append(Slider(rect_row(i), "Grid height", 4, 40, 1,
+                                        lambda: float(self.cfg.h), lambda v: setattr(self.cfg, "h", int(v)), fmt="{:.0f}")); i += 1
+            self._widgets.append(Slider(rect_row(i), "Random walls", 0, 120, 1,
+                                        lambda: float(getattr(self.cfg, "n_walls", 18)),
+                                        lambda v: setattr(self.cfg, "n_walls", int(v)), fmt="{:.0f}")); i += 1
+            self._widgets.append(Toggle(rect_row(i), "Bonus food",
+                                        lambda: bool(getattr(self.cfg, "food_enabled", True)),
+                                        lambda b: setattr(self.cfg, "food_enabled", bool(b)))); i += 1
+            self._widgets.append(Slider(rect_row(i), "Energy start", 1, 120, 1,
+                                        lambda: float(self.cfg.energy_start), lambda v: setattr(self.cfg, "energy_start", int(v)), fmt="{:.0f}")); i += 1
+            self._widgets.append(Slider(rect_row(i), "Energy max (0=unlimited)", 0, 200, 1,
+                                        lambda: float(getattr(self.cfg, "energy_max", 0)),
+                                        lambda v: setattr(self.cfg, "energy_max", int(v)), fmt="{:.0f}")); i += 1
+            self._widgets.append(Slider(rect_row(i), "Energy food gain", 1, 120, 1,
+                                        lambda: float(self.cfg.energy_food), lambda v: setattr(self.cfg, "energy_food", int(v)), fmt="{:.0f}")); i += 1
+            self._widgets.append(Slider(rect_row(i), "Energy step cost", 1, 20, 1,
+                                        lambda: float(self.cfg.energy_step), lambda v: setattr(self.cfg, "energy_step", int(v)), fmt="{:.0f}")); i += 1
+
+        if step == "train":
+            self._widgets.append(Slider(rect_row(i), "Episodes", 200, 50000, 200,
+                                        lambda: float(self.cfg.train_episodes), lambda v: setattr(self.cfg, "train_episodes", int(v)), fmt="{:.0f}")); i += 1
+            self._widgets.append(Slider(rect_row(i), "Max steps/ep", 50, 800, 10,
+                                        lambda: float(self.cfg.train_max_steps), lambda v: setattr(self.cfg, "train_max_steps", int(v)), fmt="{:.0f}")); i += 1
+            self._widgets.append(Slider(rect_row(i), "Eval every", 0, 2000, 50,
+                                        lambda: float(self.cfg.train_eval_every), lambda v: setattr(self.cfg, "train_eval_every", int(v)), fmt="{:.0f}")); i += 1
+            self._widgets.append(Slider(rect_row(i), "Eval episodes", 10, 200, 10,
+                                        lambda: float(self.cfg.train_eval_episodes), lambda v: setattr(self.cfg, "train_eval_episodes", int(v)), fmt="{:.0f}")); i += 1
+            self._widgets.append(Slider(rect_row(i), "Speed (eps/update)", 1, 50, 1,
+                                        lambda: float(self.cfg.train_speed), lambda v: setattr(self.cfg, "train_speed", int(v)), fmt="{:.0f}")); i += 1
+            self._widgets.append(Toggle(rect_row(i), "Autosave on finish",
+                                        lambda: bool(getattr(self.cfg, "train_autosave", True)),
+                                        lambda b: setattr(self.cfg, "train_autosave", bool(b)))); i += 1
+
+        if step == "curriculum":
+            self._widgets.append(Toggle(rect_row(i), "Curriculum mode",
+                                        lambda: bool(getattr(self.cfg, "train_curriculum", False)),
+                                        lambda b: setattr(self.cfg, "train_curriculum", bool(b)))); i += 1
+            total_levels = max(1, getattr(importlib.import_module("core.env"), "GridSurvivalEnv").preset_level_count())
+            self._widgets.append(Slider(rect_row(i), "Start levels", 1, total_levels, 1,
+                                        lambda: float(getattr(self.cfg, "train_curriculum_start", 5)),
+                                        lambda v: setattr(self.cfg, "train_curriculum_start", int(v)), fmt="{:.0f}")); i += 1
+            self._widgets.append(Slider(rect_row(i), "Add levels", 1, total_levels, 1,
+                                        lambda: float(getattr(self.cfg, "train_curriculum_step", 5)),
+                                        lambda v: setattr(self.cfg, "train_curriculum_step", int(v)), fmt="{:.0f}")); i += 1
+            self._widgets.append(Slider(rect_row(i), "Success threshold", 0.5, 1.0, 0.05,
+                                        lambda: float(getattr(self.cfg, "train_curriculum_threshold", 0.8)),
+                                        lambda v: setattr(self.cfg, "train_curriculum_threshold", float(v)), fmt="{:.2f}")); i += 1
+            self._widgets.append(Slider(rect_row(i), "Window (episodes)", 10, 200, 10,
+                                        lambda: float(getattr(self.cfg, "train_curriculum_window", 50)),
+                                        lambda v: setattr(self.cfg, "train_curriculum_window", int(v)), fmt="{:.0f}")); i += 1
+            self._widgets.append(Slider(rect_row(i), "Eps rewind", 0.0, 1.0, 0.05,
+                                        lambda: float(getattr(self.cfg, "train_curriculum_eps_rewind", 0.5)),
+                                        lambda v: setattr(self.cfg, "train_curriculum_eps_rewind", float(v)), fmt="{:.2f}")); i += 1
+
+        btn_h = int(38 * scale)
+        btn_w = int(140 * scale)
+        btn_gap = int(12 * scale)
+        btn_y = self.rect.bottom - pad - btn_h
+        cancel_btn = Button(pygame.Rect(self.rect.x + pad, btn_y, btn_w, btn_h), "Cancel", self.close)
+        back_btn = Button(pygame.Rect(self.rect.right - pad - (2 * btn_w + btn_gap), btn_y, btn_w, btn_h), "Back", self._back)
+        next_label = "Create Q-table" if self._step == len(self._steps) - 1 else "Next"
+        next_btn = Button(pygame.Rect(self.rect.right - pad - btn_w, btn_y, btn_w, btn_h), next_label, self._next_or_apply)
+        back_btn.enabled = self._step > 0
+        self._widgets += [cancel_btn, back_btn, next_btn]
+        self._focus.set(self._widgets)
+
+    def _back(self) -> None:
+        if self._step > 0:
+            self._step -= 1
+            self._dirty = True
+
+    def _next_or_apply(self) -> None:
+        self._show_warnings = True
+        if self._step < len(self._steps) - 1:
+            self._step += 1
+            self._dirty = True
+        else:
+            self.on_apply()
+            self.close()
+
+    def handle_event(self, event):
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            self.close()
+            return
+        if event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_TAB, pygame.K_DOWN):
+                self._focus.next()
+            elif event.key == pygame.K_UP:
+                self._focus.prev()
+        focused = self._focus.focused()
+        for w in self._widgets:
+            w.handle_event(event, focused=(w is focused))
+
+    def render(self, screen, theme):
+        self._layout(theme)
+        super().render(screen, theme)
+        small = theme.font(max(14, int(theme.font_size * 0.85 * theme.ui_scale)))
+        pad = int(18 * theme.ui_scale)
+        x = self.rect.x + pad
+        y = self.rect.y + int(56 * theme.ui_scale)
+        for line in self._lines:
+            surf = small.render(line, True, theme.palette.muted)
+            screen.blit(surf, (x, y))
+            y += surf.get_height() + int(4 * theme.ui_scale)
+
+        warnings = self._warnings() if self._show_warnings else []
+        if warnings:
+            wy = self.rect.bottom - int(86 * theme.ui_scale)
+            for warn in warnings[:2]:
+                warn_surf = small.render(f"Warning: {warn}", True, theme.palette.warn)
+                screen.blit(warn_surf, (x, wy))
+                wy += warn_surf.get_height() + int(4 * theme.ui_scale)
+
+        focused = self._focus.focused()
+        for w in self._widgets:
+            w.draw(screen, theme, focused=(w is focused))
 

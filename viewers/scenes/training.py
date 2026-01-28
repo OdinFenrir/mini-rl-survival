@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 import statistics
+import subprocess
+import sys
+import time
 from collections import deque
 
 import pygame
@@ -10,7 +13,8 @@ from core.env import GridSurvivalEnv
 from core.qlearning import QLearningAgent, QLearningConfig
 from viewers.io.export import export_csv, export_json
 from viewers.scenes.sim import SimulationScene
-from viewers.ui.modals import FileDialogModal, ConfirmDialog
+from viewers.scenes.settings import SettingsScene
+from viewers.ui.modals import FileDialogModal, ConfirmDialog, TrainingSetupWizard
 from viewers.ui.widgets import Button, Slider, Toggle, FocusManager, Label
 
 
@@ -52,6 +56,7 @@ class TrainingScene:
             n_walls=int(getattr(cfg, "n_walls", 18)),
             n_traps=int(getattr(cfg, "n_traps", int(cfg.hazards))),
             food_enabled=bool(getattr(cfg, "food_enabled", True)),
+            placement_difficulty=str(getattr(cfg, "placement_difficulty", "medium")),
         )
         qcfg = QLearningConfig(
             alpha=float(cfg.alpha),
@@ -80,6 +85,7 @@ class TrainingScene:
             "n_walls": int(getattr(cfg, "n_walls", 18)),
             "n_traps": int(getattr(cfg, "n_traps", int(cfg.hazards))),
             "food_enabled": bool(getattr(cfg, "food_enabled", True)),
+            "placement_difficulty": str(getattr(cfg, "placement_difficulty", "medium")),
         }
 
     def _run_episode_env(self, env: GridSurvivalEnv, agent: QLearningAgent, max_steps: int, train: bool) -> tuple[int, int, float, str]:
@@ -182,8 +188,8 @@ class TrainingScene:
         w, h = app.screen.get_size()
         scale = float(app.theme.ui_scale)
         pad = int(50 * scale)
-        gap = int(12 * scale)
-        row_h = int(54 * scale)
+        gap = int(8 * scale)
+        row_h = int(44 * scale)
         left_w = int(w * 0.52)
         x0 = pad
         y0 = int(110 * scale)
@@ -224,8 +230,15 @@ class TrainingScene:
         items.append(Button(rect_left(left_i), "Test all maps", lambda: self._eval_all_maps(app))); left_i += 1
         items.append(Button(rect_left(left_i), "Export map stats", lambda: self._open_export_map_stats(app))); left_i += 1
         items.append(Button(rect_left(left_i), "Start / Resume", lambda: self._start(app))); left_i += 1
-        items.append(Button(rect_left(left_i), "Pause", lambda: self._pause())); left_i += 1
-        items.append(Button(rect_left(left_i), "Reset progress", lambda: self._reset(app))); left_i += 1
+        items.append(Button(rect_left(left_i), "Pause", lambda: self._pause(app))); left_i += 1
+        items.append(Button(rect_left(left_i), "Reset training (keep file)", lambda: self._confirm_reset(app))); left_i += 1
+
+        items.append(Label(rect_left(left_i), "Files")); left_i += 1
+        items.append(Button(rect_left(left_i), "New Q-table (guided)", lambda: self._open_new_qtable_wizard(app))); left_i += 1
+        items.append(Button(rect_left(left_i), "Save Q-table", lambda: self._open_save(app))); left_i += 1
+        items.append(Button(rect_left(left_i), "Load Q-table", lambda: self._open_load(app))); left_i += 1
+        items.append(Button(rect_left(left_i), "Delete Q-table file", lambda: self._open_delete_file(app))); left_i += 1
+        items.append(Button(rect_left(left_i), "Delete all training files", lambda: self._confirm_delete_training(app))); left_i += 1
 
         total_levels = GridSurvivalEnv.preset_level_count()
         max_levels = max(1, total_levels)
@@ -252,12 +265,79 @@ class TrainingScene:
                             lambda: bool(getattr(cfg, "train_use_settings_for_play", True)),
                             lambda b: setattr(cfg, "train_use_settings_for_play", bool(b)))); right_i += 1
 
-        items.append(Button(rect_right(right_i), "Delete Q-table file", lambda: self._open_delete_file(app))); right_i += 1
-        items.append(Button(rect_right(right_i), "Delete all training files", lambda: self._confirm_delete_training(app))); right_i += 1
-        items.append(Button(rect_right(right_i), "Save Q-table", lambda: self._open_save(app))); right_i += 1
-        items.append(Button(rect_right(right_i), "Load Q-table", lambda: self._open_load(app))); right_i += 1
+        items.append(Label(rect_right(right_i), "3D View")); right_i += 1
+        total_levels = GridSurvivalEnv.preset_level_count()
+        def cycle_viz_level() -> None:
+            if total_levels <= 0:
+                cfg.viz_level_filter = -1
+                app.toast.push("3D level: All")
+                self._layout(app)
+                return
+            cur = int(getattr(cfg, "viz_level_filter", -1))
+            if cur < 0:
+                cur = 0
+            elif cur >= total_levels - 1:
+                cur = -1
+            else:
+                cur += 1
+            cfg.viz_level_filter = cur
+            label = "All" if cur < 0 else f"{cur + 1}/{total_levels}"
+            app.toast.push(f"3D level: {label}")
+            self._layout(app)
+
+        level_label = "All"
+        if total_levels > 0 and int(getattr(cfg, "viz_level_filter", -1)) >= 0:
+            cur_level = int(cfg.viz_level_filter)
+            level_label = f"L{cur_level} ({cur_level + 1}/{total_levels})"
+        items.append(Button(rect_right(right_i), f"3D level: {level_label}", cycle_viz_level)); right_i += 1
+        items.append(Slider(rect_right(right_i), "3D min visits", 0, 50, 1,
+                            lambda: float(getattr(cfg, "viz_min_visits", 0)),
+                            lambda v: setattr(cfg, "viz_min_visits", int(v)), fmt="{:.0f}")); right_i += 1
+        def cycle_viz_max_points() -> None:
+            options = [5000, 10000, 20000]
+            cur = int(getattr(cfg, "viz_max_points", 20000))
+            if cur not in options:
+                cur = 20000
+            cfg.viz_max_points = options[(options.index(cur) + 1) % len(options)]
+            app.toast.push(f"3D max points: {cfg.viz_max_points}")
+            self._layout(app)
+
+        items.append(Button(rect_right(right_i), f"3D max points: {int(getattr(cfg, 'viz_max_points', 20000))}", cycle_viz_max_points)); right_i += 1
+
+        def cycle_viz_color() -> None:
+            modes = ["value", "action", "confidence", "energy", "level", "d_goal", "d_food", "visits"]
+            cur = str(getattr(cfg, "viz_color", "value"))
+            if cur not in modes:
+                cur = "value"
+            cfg.viz_color = modes[(modes.index(cur) + 1) % len(modes)]
+            app.toast.push(f"3D color: {cfg.viz_color}")
+            self._layout(app)
+
+        items.append(Button(rect_right(right_i), f"3D color: {getattr(cfg, 'viz_color', 'value')}", cycle_viz_color)); right_i += 1
+        def cycle_viz_size() -> None:
+            modes = ["count", "confidence", "value", "none"]
+            cur = str(getattr(cfg, "viz_size", "count"))
+            if cur not in modes:
+                cur = "count"
+            cfg.viz_size = modes[(modes.index(cur) + 1) % len(modes)]
+            app.toast.push(f"3D size: {cfg.viz_size}")
+            self._layout(app)
+
+        items.append(Button(rect_right(right_i), f"3D size: {getattr(cfg, 'viz_size', 'count')}", cycle_viz_size)); right_i += 1
+        items.append(Toggle(rect_right(right_i), "3D include level feature",
+                            lambda: bool(getattr(cfg, "viz_level_feature", False)),
+                            lambda b: setattr(cfg, "viz_level_feature", bool(b)))); right_i += 1
+        items.append(Toggle(rect_right(right_i), "3D action figure",
+                            lambda: bool(getattr(cfg, "viz_action_figure", True)),
+                            lambda b: setattr(cfg, "viz_action_figure", bool(b)))); right_i += 1
+
+        items.append(Button(rect_right(right_i), "Env + Agent settings",
+                            lambda: app.push(SettingsScene(mode="training")))); right_i += 1
+        items.append(Button(rect_right(right_i), "Open 3D state view",
+                            lambda: self._open_state_space(app, mode="state"))); right_i += 1
+        items.append(Button(rect_right(right_i), "Open 3D Q-space",
+                            lambda: self._open_state_space(app, mode="qvec"))); right_i += 1
         items.append(Button(rect_right(right_i), "Play in simulation", lambda: self._play(app))); right_i += 1
-        items.append(Button(rect_right(right_i), "Back", lambda: app.pop())); right_i += 1
 
         self.widgets = items
         self.focus.set(self.widgets)
@@ -268,10 +348,21 @@ class TrainingScene:
         else:
             self._sync_curriculum(app)
             self.last_train_settings = self._collect_env_settings(app.cfg)
+        if self.episodes_done >= int(getattr(app.cfg, "train_episodes", 0)):
+            self.episodes_done = 0
+            self._avg_rewards.clear()
+            self._avg_steps.clear()
+            self._avg_foods.clear()
+            self._recent_success.clear()
+            self.map_stats.clear()
+            self.last_eval = ""
+            app.toast.push("Restarted training run (kept Q-table)")
         self.training = True
 
-    def _pause(self) -> None:
+    def _pause(self, app) -> None:
         self.training = False
+        if self.env is not None:
+            self.last_train_settings = self._collect_env_settings(app.cfg)
 
     def _reset(self, app) -> None:
         self.training = False
@@ -330,6 +421,73 @@ class TrainingScene:
             lambda: None,
         )
         app.push_modal(modal)
+
+    def _confirm_reset(self, app) -> None:
+        rect = pygame.Rect(0, 0, int(520 * app.theme.ui_scale), int(200 * app.theme.ui_scale))
+        rect.center = app.screen.get_rect().center
+
+        def on_confirm() -> None:
+            self._reset(app)
+            app.toast.push("Training reset (Q-table cleared)")
+
+        modal = ConfirmDialog(
+            rect,
+            "Reset training",
+            "This clears the in-memory Q-table and stats (file stays).",
+            on_confirm,
+            lambda: None,
+        )
+        app.push_modal(modal)
+
+    def _open_new_qtable_wizard(self, app) -> None:
+        rect = pygame.Rect(0, 0, int(900 * app.theme.ui_scale), int(640 * app.theme.ui_scale))
+        rect.center = app.screen.get_rect().center
+
+        def on_apply() -> None:
+            if bool(getattr(app.cfg, "train_curriculum", False)):
+                app.cfg.level_mode = "preset"
+                app.cfg.level_cycle = True
+            app.cfg.train_use_settings_for_play = True
+            default_path = self._default_new_qtable_path()
+            dialog_rect = pygame.Rect(0, 0, int(560 * app.theme.ui_scale), int(420 * app.theme.ui_scale))
+            dialog_rect.center = app.screen.get_rect().center
+
+            def on_confirm(path: str) -> None:
+                app.cfg.qtable_path = path
+                self._reset(app)
+                if self.agent:
+                    self.agent.save(path)
+                app.toast.push(f"New Q-table: {os.path.basename(path)}")
+
+            modal = FileDialogModal(
+                dialog_rect,
+                "Save new Q-table as",
+                on_confirm,
+                lambda: None,
+                initial_path=default_path,
+            )
+            app.push_modal(modal)
+
+        modal = TrainingSetupWizard(
+            rect,
+            app.cfg,
+            on_apply,
+            lambda: None,
+        )
+        app.push_modal(modal)
+
+    def _default_new_qtable_path(self) -> str:
+        os.makedirs("data", exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        base = os.path.join("data", f"qtable_{stamp}.pkl")
+        if not os.path.exists(base):
+            return base
+        i = 1
+        while True:
+            path = os.path.join("data", f"qtable_{stamp}_{i}.pkl")
+            if not os.path.exists(path):
+                return path
+            i += 1
 
     def _delete_training_files(self, app) -> None:
         data_dir = "data"
@@ -523,6 +681,49 @@ class TrainingScene:
         if bool(getattr(app.cfg, "train_use_settings_for_play", True)):
             env_overrides = self.last_train_settings or self._collect_env_settings(app.cfg)
         app.push(SimulationScene(agent_override=self.agent, env_overrides=env_overrides))
+
+    def _open_state_space(self, app, mode: str = "state") -> None:
+        if self.agent is None:
+            app.toast.push("Train or load a Q-table first.")
+            return
+        qpath = getattr(app.cfg, "qtable_path", "") or ""
+        needs_save = not qpath or not os.path.isfile(qpath)
+        if needs_save:
+            qpath = os.path.join("data", "qtable_visualize.pkl")
+            try:
+                os.makedirs(os.path.dirname(qpath) or ".", exist_ok=True)
+                self.agent.save(qpath)
+                app.toast.push(f"Saved Q-table for visualization -> {qpath}")
+            except Exception as exc:
+                app.toast.push(f"Save failed: {exc}")
+                return
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        script_path = os.path.join(repo_root, "scripts", "plot_state_space_3d.py")
+        if not os.path.exists(script_path):
+            app.toast.push("3D script not found.")
+            return
+        try:
+            args = [sys.executable, "-m", "scripts.plot_state_space_3d", "--load", qpath, "--mode", mode]
+            color = str(getattr(app.cfg, "viz_color", "value") or "value")
+            args += ["--color", color]
+            size = str(getattr(app.cfg, "viz_size", "count") or "count")
+            args += ["--size", size]
+            min_visits = int(getattr(app.cfg, "viz_min_visits", 0))
+            if min_visits > 0:
+                args += ["--min-visits", str(min_visits)]
+            max_points = int(getattr(app.cfg, "viz_max_points", 20000))
+            if max_points > 0:
+                args += ["--max-points", str(max_points)]
+            level_filter = int(getattr(app.cfg, "viz_level_filter", -1))
+            if level_filter >= 0:
+                args += ["--level", str(level_filter)]
+            if bool(getattr(app.cfg, "viz_level_feature", False)):
+                args.append("--level-feature")
+            if bool(getattr(app.cfg, "viz_action_figure", True)):
+                args.append("--action-figure")
+            subprocess.Popen(args, cwd=repo_root)
+        except Exception as exc:
+            app.toast.push(f"Open failed: {exc}")
 
     def handle_event(self, app, event: pygame.event.Event) -> None:
         if not self.widgets:
