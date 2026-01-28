@@ -26,14 +26,6 @@ from viewers.scenes.render_context import RenderContext
 from viewers.ui.modals import FileDialogModal
 
 
-TILESET_INDICES = {
-    "hazard": 357,
-    "food": 393,   # candy bar
-    "agent": 168,
-    "goal": 507,   # door
-}
-
-
 def _normalize(hm: np.ndarray) -> np.ndarray:
     mx = float(hm.max()) if hm.size else 0.0
     mn = float(hm.min()) if hm.size else 0.0
@@ -208,15 +200,6 @@ class SimulationScene:
             return
         try:
             base = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "assets"))
-            sheet_path = os.path.join(base, "food_pixel_art", "Food Pixel Art", "Food Pixel Art.png")
-            if os.path.exists(sheet_path):
-                sheet = pygame.image.load(sheet_path).convert_alpha()
-                tw, th = 19, 17
-                def crop(col: int, row: int) -> pygame.Surface:
-                    rect = pygame.Rect(col * tw, row * th, tw, th)
-                    return sheet.subsurface(rect)
-                self._pixel_sprites["food"] = crop(2, 5)
-                self._pixel_sprites["agent"] = crop(1, 4)
             custom_dir = os.path.join(base, "food_pixel_art", "Food Pixel Art")
             custom_map = {
                 "food": "key.png",
@@ -227,9 +210,6 @@ class SimulationScene:
                 path = os.path.join(custom_dir, fname)
                 if os.path.exists(path):
                     self._pixel_sprites[key] = pygame.image.load(path).convert_alpha()
-            cross_path = os.path.join(base, "kenney_game_icons", "PNG", "Black", "1x", "cross.png")
-            if os.path.exists(cross_path):
-                self._pixel_sprites["hazard"] = pygame.image.load(cross_path).convert_alpha()
         except Exception:
             self._pixel_sprites = {}
 
@@ -830,7 +810,7 @@ class SimulationScene:
         scale = float(app.theme.ui_scale)
         border_radius = int(16 * scale)
         pixel_style = app.theme.ui_style == "pixel"
-        use_tiles = not pixel_style and app.theme.ui_style not in ("neo", "modern")
+        use_tiles = False
         if pixel_style:
             pygame.draw.rect(screen, app.theme.palette.grid1, board_rect, border_radius=0)
             pygame.draw.rect(screen, app.theme.palette.grid_line, board_rect, width=2, border_radius=0)
@@ -899,15 +879,10 @@ class SimulationScene:
 
         sprite_scale = max(8, int(rc_local.cell * (0.8 if pixel_style else 0.9)))
         if pixel_style:
-            hazard_sprite = self._pixel_sprite("hazard", sprite_scale)
+            hazard_sprite = None
             food_sprite = self._pixel_sprite("food", sprite_scale)
             agent_sprite = self._pixel_sprite("agent", sprite_scale)
             goal_sprite = self._pixel_sprite("goal", sprite_scale)
-        elif use_tiles:
-            hazard_sprite = self._tile_surface(TILESET_INDICES["hazard"], sprite_scale)
-            food_sprite = self._pixel_sprite("food", sprite_scale) or self._tile_surface(TILESET_INDICES["food"], sprite_scale)
-            agent_sprite = self._pixel_sprite("agent", sprite_scale) or self._tile_surface(TILESET_INDICES["agent"], sprite_scale)
-            goal_sprite = self._pixel_sprite("goal", sprite_scale) or self._tile_surface(TILESET_INDICES["goal"], sprite_scale)
         else:
             hazard_sprite = None
             food_sprite = self._pixel_sprite("food", sprite_scale)

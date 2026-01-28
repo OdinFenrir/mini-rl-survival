@@ -138,8 +138,6 @@ python scripts/fetch_maze_pack.py
 - If the door never appears: it unlocks only after the key is collected.
 
 ## Third-party assets
-- Kenney 1-Bit Pack (CC0) in `assets/1bitpack_kenney_1.1`
 - Kenney Game Icons (CC0) in `assets/kenney_game_icons`
-- Food Pixel Art (CC0) in `assets/food_pixel_art`
 - Press Start 2P font (SIL OFL 1.1) in `assets/press-start-2p`
 - Maze Curriculum Dataset (MIT) via `selimaktas/maze-curriculum-dataset`
