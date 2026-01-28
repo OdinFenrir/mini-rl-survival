@@ -54,6 +54,7 @@ class FileDialogModal(Modal):
         self.files: list[str] = []
         self.selected_index = 0
         self._layout_cache: dict[str, pygame.Rect | int | float] = {}
+        self._last_scale = 1.0
         self._refresh_files()
 
     def _layout(self, scale: float) -> dict[str, pygame.Rect | int | float]:
@@ -132,7 +133,7 @@ class FileDialogModal(Modal):
         return ell + text[lo:]
 
     def handle_event(self, event):
-        layout = self._layout_cache or self._layout(1.0)
+        layout = self._layout_cache or self._layout(self._last_scale)
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mx, my = event.pos
             input_rect = layout["input_rect"]
@@ -217,7 +218,8 @@ class FileDialogModal(Modal):
             self.error = str(exc)
 
     def render(self, screen, theme):
-        layout = self._layout(theme.ui_scale)
+        self._last_scale = float(theme.ui_scale or 1.0)
+        layout = self._layout(self._last_scale)
         super().render(screen, theme)
         font = theme.font(int(theme.font_size * theme.ui_scale))
         input_rect = layout["input_rect"]
@@ -270,6 +272,23 @@ class ConfirmDialog(Modal):
         self.focus = 0  # 0: confirm, 1: cancel
 
     def handle_event(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            mx, my = event.pos
+            btn_w = 100
+            btn_h = 36
+            gap = 24
+            x0 = self.rect.x + 16
+            y0 = self.rect.y + self.rect.height - btn_h - 16
+            confirm_rect = pygame.Rect(x0, y0, btn_w, btn_h)
+            cancel_rect = pygame.Rect(x0 + btn_w + gap, y0, btn_w, btn_h)
+            if confirm_rect.collidepoint(mx, my):
+                self.on_confirm()
+                self.close()
+                return
+            if cancel_rect.collidepoint(mx, my):
+                self.on_cancel()
+                self.close()
+                return
         if event.type == pygame.KEYDOWN:
             if event.key in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_TAB):
                 self.focus = 1 - self.focus

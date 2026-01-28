@@ -7,10 +7,14 @@ def render_color(env):
 		row = []
 		for x in range(env.width):
 			ch = "."
+			if (x, y) == getattr(env, "goal", (None, None)):
+				ch = "G"
+			if (x, y) in getattr(env, "walls", set()):
+				ch = "#"
+			if (x, y) in getattr(env, "hazards", set()):
+				ch = "T"
 			if (x, y) == getattr(env, "food", (None, None)):
 				ch = "F"
-			if (x, y) in getattr(env, "hazards", set()):
-				ch = "X"
 			if (x, y) == getattr(env, "agent", (None, None)):
 				ch = "A"
 			row.append(ch)

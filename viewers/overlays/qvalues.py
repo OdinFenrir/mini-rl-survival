@@ -6,21 +6,27 @@ from viewers.ui.theme import Theme
 
 
 class QValuesOverlay:
-    def render(self, screen: pygame.Surface, theme: Theme, agent, rc, mouse_pos) -> None:
+    def render(self, screen: pygame.Surface, theme: Theme, agent, rc, mouse_pos, level_id: int | None = None) -> None:
         x, y = rc.pixel_to_cell(mouse_pos[0], mouse_pos[1])
         if x is None:
             return
         candidates = []
         for s, q in getattr(agent, 'Q', {}).items():
             try:
-                ax, ay = int(s[0]), int(s[1])
+                if len(s) >= 8:
+                    lvl = int(s[0])
+                    ax, ay = int(s[1]), int(s[2])
+                    if level_id is not None and lvl != level_id:
+                        continue
+                else:
+                    ax, ay = int(s[0]), int(s[1])
             except Exception:
                 continue
             if ax == x and ay == y:
                 candidates.append((s, q))
         if not candidates:
             return
-        s, q = max(candidates, key=lambda sq: int(sq[0][4]) if len(sq[0]) > 4 else 0)
+        s, q = max(candidates, key=lambda sq: int(sq[0][-1]) if len(sq[0]) > 0 else 0)
         font = theme.font(int(theme.font_size * theme.ui_scale))
         pad = int(10 * theme.ui_scale)
         lines = [

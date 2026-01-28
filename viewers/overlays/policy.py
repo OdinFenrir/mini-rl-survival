@@ -15,11 +15,17 @@ class PolicyOverlay:
         self._cache_key = None
         self._cache = None
 
-    def _compute(self, agent, w: int, h: int):
+    def _compute(self, agent, w: int, h: int, level_id: int | None = None):
         best = np.full((h, w), -1, dtype=int)
         for s, qvals in getattr(agent, 'Q', {}).items():
             try:
-                ax, ay = int(s[0]), int(s[1])
+                if len(s) >= 8:
+                    lvl = int(s[0])
+                    ax, ay = int(s[1]), int(s[2])
+                    if level_id is not None and lvl != level_id:
+                        continue
+                else:
+                    ax, ay = int(s[0]), int(s[1])
             except Exception:
                 continue
             if 0 <= ax < w and 0 <= ay < h and qvals:
@@ -27,16 +33,18 @@ class PolicyOverlay:
                 best[ay, ax] = a
         return best
 
-    def render(self, screen: pygame.Surface, theme: Theme, agent, rc) -> None:
-        key = (len(getattr(agent, 'Q', {})), rc.w, rc.h)
+    def render(self, screen: pygame.Surface, theme: Theme, agent, rc, level_id: int | None = None, blocked: set | None = None) -> None:
+        key = (len(getattr(agent, 'Q', {})), rc.w, rc.h, level_id)
         if key != self._cache_key:
             self._cache_key = key
-            self._cache = self._compute(agent, rc.w, rc.h)
+            self._cache = self._compute(agent, rc.w, rc.h, level_id=level_id)
         best = self._cache
         if best is None:
             return
         for y in range(rc.h):
             for x in range(rc.w):
+                if blocked and (x, y) in blocked:
+                    continue
                 a = int(best[y, x])
                 if a < 0:
                     continue

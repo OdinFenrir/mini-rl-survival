@@ -5,7 +5,7 @@ import pickle
 import random
 from typing import Dict, Tuple
 
-State = Tuple[int, int, int, int, int]  # (ax, ay, fx, fy, energy)
+State = Tuple[int, ...]  # state tuple, keep flexible as env evolves
 Action = int  # 0..3
 
 

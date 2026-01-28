@@ -30,6 +30,23 @@ class MainMenuScene:
             "help": "question.png",
             "exit": "exitRight.png",
         }
+        color = app.theme.palette.ui_text if app.theme.ui_style == "pixel" else app.theme.palette.fg
+
+        def tint_icon(img: pygame.Surface, tint_color: tuple[int, int, int]) -> pygame.Surface:
+            mask = pygame.mask.from_surface(img)
+            surf = pygame.Surface(img.get_size(), pygame.SRCALPHA)
+            mask.to_surface(surf, setcolor=(*tint_color, 255), unsetcolor=(0, 0, 0, 0))
+            return surf
+
+        def make_train_icon(size: int, tint_color: tuple[int, int, int]) -> pygame.Surface:
+            surf = pygame.Surface((size, size), pygame.SRCALPHA)
+            pad = max(2, size // 6)
+            pygame.draw.rect(surf, tint_color, (pad, size // 2 - 2, size - 2 * pad, 4), border_radius=3)
+            pygame.draw.circle(surf, tint_color, (pad, size // 2), max(2, size // 6))
+            pygame.draw.circle(surf, tint_color, (size - pad, size // 2), max(2, size // 6))
+            pygame.draw.circle(surf, tint_color, (size // 2, size // 2 - size // 5), max(2, size // 6), width=2)
+            return surf
+
         for key, fname in names.items():
             path = os.path.join(base, fname)
             if os.path.exists(path):
@@ -37,7 +54,10 @@ class MainMenuScene:
                 # scale to menu icon size
                 target = int(24 * app.theme.ui_scale)
                 img = pygame.transform.smoothscale(img, (target, target))
-                self._icons[key] = img
+                self._icons[key] = tint_icon(img, color)
+        if "train" not in self._icons:
+            size = int(24 * app.theme.ui_scale)
+            self._icons["train"] = make_train_icon(size, color)
 
     def _layout(self, app) -> None:
         self._load_icons(app)
@@ -97,16 +117,39 @@ class MainMenuScene:
     def render(self, app, screen: pygame.Surface) -> None:
         if not self.widgets:
             self._layout(app)
-        screen.fill(app.theme.palette.bg)
+        w, h = screen.get_size()
+        if app.theme.ui_style == "pixel":
+            screen.fill(app.theme.palette.bg)
+        else:
+            # Soft vertical gradient background
+            bg = pygame.Surface((w, h))
+            top = app.theme.palette.bg
+            bottom = app.theme.palette.grid0
+            for y in range(h):
+                t = y / max(1, h - 1)
+                c = tuple(int(top[i] * (1 - t) + bottom[i] * t) for i in range(3))
+                pygame.draw.line(bg, c, (0, y), (w, y))
+            screen.blit(bg, (0, 0))
         title_font = app.theme.font(int(app.theme.font_size_title * app.theme.ui_scale))
         subtitle_font = app.theme.font(int(app.theme.font_size * 0.85 * app.theme.ui_scale))
         title = title_font.render('Mini RL Survival', True, app.theme.palette.fg)
         subtitle = subtitle_font.render('Modular Pygame viewer + Q-learning', True, app.theme.palette.muted)
-        w, _ = screen.get_size()
         screen.blit(title, (w // 2 - title.get_width() // 2, int(80 * app.theme.ui_scale)))
         screen.blit(subtitle, (w // 2 - subtitle.get_width() // 2, int(140 * app.theme.ui_scale)))
         line_y = int(190 * app.theme.ui_scale)
         pygame.draw.line(screen, app.theme.palette.grid_line, (int(w * 0.2), line_y), (int(w * 0.8), line_y), 2)
+
+        if app.theme.ui_style != "pixel" and self.widgets:
+            pad = int(26 * app.theme.ui_scale)
+            min_x = min(wi.rect.x for wi in self.widgets)
+            max_x = max(wi.rect.right for wi in self.widgets)
+            min_y = min(wi.rect.y for wi in self.widgets)
+            max_y = max(wi.rect.bottom for wi in self.widgets)
+            panel_rect = pygame.Rect(min_x - pad, min_y - pad, (max_x - min_x) + 2 * pad, (max_y - min_y) + 2 * pad)
+            shadow = pygame.Surface((panel_rect.w, panel_rect.h), pygame.SRCALPHA)
+            pygame.draw.rect(shadow, (0, 0, 0, 80), shadow.get_rect(), border_radius=int(18 * app.theme.ui_scale))
+            screen.blit(shadow, (panel_rect.x + int(6 * app.theme.ui_scale), panel_rect.y + int(8 * app.theme.ui_scale)))
+            app.theme.draw_gradient_panel(screen, panel_rect, app.theme.palette.panel, app.theme.palette.grid1, border_radius=int(18 * app.theme.ui_scale))
 
         focused = self.focus.focused()
         for wi in self.widgets:

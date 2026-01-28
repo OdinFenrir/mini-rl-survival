@@ -9,12 +9,12 @@ from viewers.io.save_load import load_env_snapshot, load_qtable, save_env_snapsh
 def test_qtable_roundtrip():
     cfg = QLearningConfig()
     agent = QLearningAgent(n_actions=4, cfg=cfg, seed=0)
-    agent.Q[(0, 0, 1, 1, 10)] = [1.0, 2.0, 3.0, 4.0]
+    agent.Q[(0, 0, 0, 1, 1, 9, 9, 10)] = [1.0, 2.0, 3.0, 4.0]
     with tempfile.TemporaryDirectory() as td:
         path = os.path.join(td, 'q.pkl')
         save_qtable(agent, path)
         a2 = load_qtable(path, seed=0)
-        assert a2.Q[(0, 0, 1, 1, 10)] == [1.0, 2.0, 3.0, 4.0]
+        assert a2.Q[(0, 0, 0, 1, 1, 9, 9, 10)] == [1.0, 2.0, 3.0, 4.0]
 
 
 def test_env_snapshot_roundtrip():
@@ -27,5 +27,8 @@ def test_env_snapshot_roundtrip():
         assert (e2.width, e2.height, e2.n_hazards) == (env.width, env.height, env.n_hazards)
         assert e2.agent == env.agent
         assert e2.food == env.food
+        assert e2.goal == env.goal
         assert e2.hazards == env.hazards
+        assert e2.walls == env.walls
+        assert e2.level_id == env.level_id
         assert e2.energy == env.energy

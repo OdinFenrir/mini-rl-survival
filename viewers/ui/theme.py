@@ -44,9 +44,14 @@ class Theme:
         """Draw a vertical or horizontal gradient panel with rounded corners."""
         if self.ui_style == "pixel":
             border_radius = 0
+        if rect.w <= 1 or rect.h <= 1:
+            pygame.draw.rect(surface, color1, rect, border_radius=border_radius)
+            return
         grad = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+        denom = (rect.h - 1) if vertical else (rect.w - 1)
+        denom = max(1, denom)
         for i in range(rect.h if vertical else rect.w):
-            t = i / (rect.h-1 if vertical else rect.w-1)
+            t = i / denom
             c = tuple(int(color1[j] * (1-t) + color2[j] * t) for j in range(3)) + (self.palette.panel_alpha,)
             if vertical:
                 pygame.draw.line(grad, c, (0, i), (rect.w, i))
@@ -87,8 +92,30 @@ def _pixel_palette() -> Palette:
         ui_text=(170, 255, 190),
     )
 
+def _neo_palette() -> Palette:
+    return Palette(
+        bg=(10, 14, 22),
+        panel=(18, 24, 34),
+        panel_alpha=220,
+        fg=(235, 240, 255),
+        muted=(165, 175, 195),
+        accent=(96, 168, 255),
+        danger=(255, 92, 112),
+        ok=(86, 224, 160),
+        warn=(255, 208, 120),
+        grid0=(24, 30, 42),
+        grid1=(30, 36, 52),
+        grid_line=(72, 84, 112),
+        ui_panel=(30, 36, 52),
+        ui_panel_dark=(22, 28, 40),
+        ui_border=(96, 168, 255),
+        ui_text=(225, 232, 255),
+    )
+
 def palette_for_mode(mode: str) -> Palette:
     mode = (mode or "default").lower()
+    if mode in ("neo", "modern"):
+        return _neo_palette()
     if mode == "pixel":
         return _pixel_palette()
     if mode == "high_contrast":

@@ -1,7 +1,11 @@
 ﻿from __future__ import annotations
 
+import os
 import pygame
 
+from core.env import GridSurvivalEnv
+
+from viewers.ui.modals import ConfirmDialog
 from viewers.ui.widgets import Button, Slider, Toggle, FocusManager, Label
 
 
@@ -28,8 +32,10 @@ class SettingsScene:
         y0 = int(90 * scale)
         ww = w - 2 * x
 
-        row_h = int(54 * scale)
-        gap = int(10 * scale)
+        font = app.theme.font(int(app.theme.font_size * app.theme.ui_scale))
+        label_h = font.get_height()
+        row_h = max(int(64 * scale), int(label_h * 2 + 20 * scale))
+        gap = int(14 * scale)
 
         # Footer (fixed buttons)
         footer_h = int(90 * scale)
@@ -53,14 +59,74 @@ class SettingsScene:
                             lambda: float(cfg.w), lambda v: setattr(cfg, "w", int(v)), fmt="{:.0f}")); i += 1
         items.append(Slider(rect(i), "Grid height", 4, 40, 1,
                             lambda: float(cfg.h), lambda v: setattr(cfg, "h", int(v)), fmt="{:.0f}")); i += 1
-        items.append(Slider(rect(i), "Hazards", 0, 80, 1,
-                            lambda: float(cfg.hazards), lambda v: setattr(cfg, "hazards", int(v)), fmt="{:.0f}")); i += 1
+        def set_energy_start(v: float) -> None:
+            v = int(v)
+            setattr(cfg, "energy_start", v)
+            if int(getattr(cfg, "energy_max", 0)) > 0 and v > int(getattr(cfg, "energy_max", 0)):
+                setattr(cfg, "energy_max", v)
+
         items.append(Slider(rect(i), "Energy start", 1, 120, 1,
-                            lambda: float(cfg.energy_start), lambda v: setattr(cfg, "energy_start", int(v)), fmt="{:.0f}")); i += 1
+                            lambda: float(cfg.energy_start), set_energy_start, fmt="{:.0f}")); i += 1
+        items.append(Slider(rect(i), "Energy max (0=unlimited)", 0, 200, 1,
+                            lambda: float(getattr(cfg, "energy_max", 0)),
+                            lambda v: setattr(cfg, "energy_max", int(v)), fmt="{:.0f}")); i += 1
         items.append(Slider(rect(i), "Energy food gain", 1, 120, 1,
                             lambda: float(cfg.energy_food), lambda v: setattr(cfg, "energy_food", int(v)), fmt="{:.0f}")); i += 1
         items.append(Slider(rect(i), "Energy step cost", 1, 20, 1,
                             lambda: float(cfg.energy_step), lambda v: setattr(cfg, "energy_step", int(v)), fmt="{:.0f}")); i += 1
+
+        level_count = GridSurvivalEnv.preset_level_count()
+        level_template = GridSurvivalEnv.get_level_template(int(cfg.level_index) % max(1, level_count)) if level_count else {}
+        level_name = level_template.get("name", "Preset level")
+        level_desc = level_template.get("desc", "")
+        level_source = level_template.get("source", "")
+        level_layout = level_template.get("layout", []) or []
+        if level_layout:
+            level_w = max(len(line) for line in level_layout)
+            level_h = len(level_layout)
+            walls = sum(line.count("#") for line in level_layout)
+            total = max(1, level_w * level_h)
+            ratio = walls / total
+            if ratio < 0.28:
+                level_style = "Open paths"
+            elif ratio < 0.42:
+                level_style = "Balanced maze"
+            else:
+                level_style = "Tight corridors"
+        else:
+            level_w, level_h = cfg.w, cfg.h
+            level_style = ""
+
+        items.append(Label(rect(i), "Levels")); i += 1
+        items.append(Label(rect(i), f"Preset: {level_name}")); i += 1
+        items.append(Label(rect(i), f"Size: {level_w}x{level_h}")); i += 1
+        if level_style:
+            items.append(Label(rect(i), f"Style: {level_style}")); i += 1
+        if level_desc:
+            items.append(Label(rect(i), level_desc)); i += 1
+        if level_source:
+            items.append(Label(rect(i), f"Source: {level_source}")); i += 1
+
+        def cycle_level_mode():
+            modes = ["preset", "random"]
+            cur = cfg.level_mode if cfg.level_mode in modes else "preset"
+            cfg.level_mode = modes[(modes.index(cur) + 1) % len(modes)]
+            app.toast.push(f"Level mode: {cfg.level_mode}")
+
+        items.append(Button(rect(i), f"Level mode: {cfg.level_mode} (click to cycle)", cycle_level_mode)); i += 1
+        max_level = max(0, level_count - 1)
+        items.append(Slider(rect(i), "Level index", 0, max(0, max_level), 1,
+                            lambda: float(cfg.level_index),
+                            lambda v: setattr(cfg, "level_index", int(v)), fmt="{:.0f}")); i += 1
+        items.append(Toggle(rect(i), "Cycle levels",
+                            lambda: bool(getattr(cfg, "level_cycle", True)),
+                            lambda b: setattr(cfg, "level_cycle", bool(b)))); i += 1
+        items.append(Slider(rect(i), "Random walls", 0, 120, 1,
+                            lambda: float(getattr(cfg, "n_walls", 18)),
+                            lambda v: setattr(cfg, "n_walls", int(v)), fmt="{:.0f}")); i += 1
+        items.append(Toggle(rect(i), "Bonus food",
+                            lambda: bool(getattr(cfg, "food_enabled", True)),
+                            lambda b: setattr(cfg, "food_enabled", bool(b)))); i += 1
 
         items.append(Label(rect(i), "Agent")); i += 1
         items.append(Slider(rect(i), "Alpha", 0.01, 1.0, 0.01,
@@ -81,20 +147,48 @@ class SettingsScene:
                             lambda: float(cfg.sim_steps_per_frame), lambda v: setattr(cfg, "sim_steps_per_frame", int(v)), fmt="{:.0f}")); i += 1
         items.append(Slider(rect(i), "Font scale", 0.8, 1.8, 0.05,
                             lambda: float(cfg.font_scale), lambda v: setattr(cfg, "font_scale", float(v)))); i += 1
+        items.append(Toggle(rect(i), "Sound effects",
+                            lambda: bool(getattr(cfg, "sound_enabled", True)),
+                            lambda b: setattr(cfg, "sound_enabled", bool(b)))); i += 1
         items.append(Toggle(rect(i), "Reduced motion",
                             lambda: bool(cfg.reduced_motion), lambda b: setattr(cfg, "reduced_motion", bool(b)))); i += 1
 
         def cycle_color():
-            modes = ["pixel", "default", "colorblind", "high_contrast"]
+            modes = ["neo", "pixel", "default", "colorblind", "high_contrast"]
             cur = cfg.color_mode if cfg.color_mode in modes else "default"
             cfg.color_mode = modes[(modes.index(cur) + 1) % len(modes)]
             app.apply_theme_from_config()
-            app.toast.push(f"Color mode: {cfg.color_mode}")
+            app.toast.push(f"Theme: {cfg.color_mode}")
 
-        items.append(Button(rect(i), f"Color mode: {cfg.color_mode} (click to cycle)", cycle_color)); i += 1
+        items.append(Button(rect(i), f"Theme preset: {cfg.color_mode} (click to cycle)", cycle_color)); i += 1
         items.append(Slider(rect(i), "Heatmap opacity", 0.1, 1.0, 0.05,
                             lambda: float(getattr(cfg, "heatmap_opacity", 0.7)),
                             lambda v: setattr(cfg, "heatmap_opacity", float(v)), fmt="{:.2f}")); i += 1
+
+        items.append(Label(rect(i), "Data")); i += 1
+
+        def clear_run_history() -> None:
+            path = os.path.join("data", "run_history.jsonl")
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                app.toast.push("Run history cleared")
+            except Exception as exc:
+                app.toast.push(f"Clear failed: {exc}")
+
+        def confirm_clear_run_history() -> None:
+            rect = pygame.Rect(0, 0, int(420 * scale), int(200 * scale))
+            rect.center = app.screen.get_rect().center
+            modal = ConfirmDialog(
+                rect,
+                "Clear run history",
+                "This will delete data/run_history.jsonl",
+                on_confirm=clear_run_history,
+                on_cancel=lambda: None,
+            )
+            app.push_modal(modal)
+
+        items.append(Button(rect(i), "Clear run history", confirm_clear_run_history)); i += 1
 
         # Footer buttons (fixed)
         bw = int(220 * scale)

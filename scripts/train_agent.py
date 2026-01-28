@@ -69,7 +69,7 @@ def play(env: GridSurvivalEnv, agent: QLearningAgent, max_steps: int, sleep_s: f
 		obs = res.obs
 		# use colored renderer from viz.py for nicer terminal output
 		print(viz.render_color(env))
-		print(f"t={t:03d} energy={obs[4]:02d} foods={foods:02d} total_reward={total:.2f}")
+		print(f"t={t:03d} energy={obs[-1]:02d} foods={foods:02d} total_reward={total:.2f}")
 		print("-" * (2 * env.width - 1))
 		time.sleep(sleep_s)
 
@@ -90,12 +90,25 @@ def main() -> None:
 	ap.add_argument("--sleep", type=float, default=0.03, help="sleep between frames in --play")
 
 	# env knobs
-	ap.add_argument("--w", type=int, default=10, help="grid width")
-	ap.add_argument("--h", type=int, default=10, help="grid height")
-	ap.add_argument("--hazards", type=int, default=10, help="number of hazards")
+	ap.add_argument("--w", type=int, default=12, help="grid width")
+	ap.add_argument("--h", type=int, default=12, help="grid height")
+	ap.add_argument("--hazards", type=int, default=0, help="number of traps")
 	ap.add_argument("--energy-start", type=int, default=25, help="starting energy")
 	ap.add_argument("--energy-food", type=int, default=18, help="energy gained on food")
 	ap.add_argument("--energy-step", type=int, default=1, help="energy lost per step")
+	ap.add_argument("--energy-max", type=int, default=0, help="maximum energy (0 = unlimited)")
+	ap.add_argument("--level-mode", type=str, default="preset", help="preset or random")
+	ap.add_argument("--level-index", type=int, default=0, help="level index for preset mode")
+	ap.add_argument("--no-level-cycle", action="store_true", help="disable preset level cycling")
+	ap.add_argument("--level-limit", type=int, default=0, help="limit preset levels to first N")
+	ap.add_argument("--walls", type=int, default=18, help="number of walls for random levels")
+	ap.add_argument("--traps", type=int, default=0, help="number of traps for random levels")
+	ap.add_argument("--no-food", action="store_true", help="disable bonus food spawns")
+	ap.add_argument("--curriculum", action="store_true", help="enable curriculum over preset levels")
+	ap.add_argument("--curriculum-start", type=int, default=5, help="starting number of levels")
+	ap.add_argument("--curriculum-step", type=int, default=5, help="levels added when threshold is met")
+	ap.add_argument("--curriculum-window", type=int, default=50, help="episodes window for success rate")
+	ap.add_argument("--curriculum-threshold", type=float, default=0.8, help="success rate to unlock more levels")
 
 	# q-learning knobs
 	ap.add_argument("--alpha", type=float, default=0.25, help="learning rate")
@@ -106,6 +119,12 @@ def main() -> None:
 
 	args = ap.parse_args()
 
+	total_levels = GridSurvivalEnv.preset_level_count()
+	level_limit = int(args.level_limit) if int(args.level_limit) > 0 else None
+	curriculum = bool(args.curriculum) and args.level_mode == "preset" and total_levels > 0
+	if curriculum:
+		level_limit = max(1, min(int(args.curriculum_start), total_levels))
+
 	env = GridSurvivalEnv(
 		width=args.w,
 		height=args.h,
@@ -113,7 +132,15 @@ def main() -> None:
 		energy_start=args.energy_start,
 		energy_food_gain=args.energy_food,
 		energy_step_cost=args.energy_step,
+		energy_max=args.energy_max,
 		seed=args.seed,
+		level_mode=args.level_mode,
+		level_index=args.level_index,
+		level_cycle=not args.no_level_cycle,
+		level_limit=level_limit,
+		n_walls=args.walls,
+		n_traps=args.traps,
+		food_enabled=not args.no_food,
 	)
 
 	cfg = QLearningConfig(
@@ -133,8 +160,22 @@ def main() -> None:
 		play(env, agent, max_steps=args.max_steps, sleep_s=args.sleep)
 		return
 
+	recent_success = []
+	window = max(1, int(args.curriculum_window))
 	for ep in range(1, args.episodes + 1):
-		run_episode(env, agent, max_steps=args.max_steps, train=True)
+		steps, foods, total, terminal = run_episode(env, agent, max_steps=args.max_steps, train=True)
+		if curriculum:
+			recent_success.append(1 if terminal == "goal" else 0)
+			if len(recent_success) > window:
+				recent_success = recent_success[-window:]
+			if len(recent_success) >= window:
+				rate = sum(recent_success) / len(recent_success)
+				if rate >= float(args.curriculum_threshold) and level_limit is not None and level_limit < total_levels:
+					level_limit = min(total_levels, level_limit + max(1, int(args.curriculum_step)))
+					env.level_limit = level_limit
+					recent_success.clear()
+					agent.total_steps = int(agent.total_steps * 0.5)
+					print(f"[ep {ep}] curriculum unlocked -> levels {level_limit}/{total_levels}")
 
 		if args.eval_every and ep % args.eval_every == 0:
 			print(f"[ep {ep}] {eval_stats(env, agent, args.eval_episodes, args.max_steps)}")

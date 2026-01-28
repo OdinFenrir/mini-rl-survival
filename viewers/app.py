@@ -8,7 +8,8 @@ from typing import Optional
 import pygame
 
 from viewers.ui.theme import Theme, palette_for_mode
-from viewers.ui.widgets import ToastManager
+from viewers.ui.widgets import ToastManager, set_sfx_manager
+from viewers.ui.sfx import SfxManager
 
 CONFIG_PATH = os.path.join('data', 'viewer_config.json')
 BASE_FONT_SIZE = 22
@@ -18,12 +19,13 @@ BASE_TITLE_SIZE = 44
 @dataclass
 class AppConfig:
     # env
-    w: int = 10
-    h: int = 10
-    hazards: int = 8
+    w: int = 12
+    h: int = 12
+    hazards: int = 0
     energy_start: int = 25
     energy_food: int = 18
     energy_step: int = 1
+    energy_max: int = 0  # 0 = unlimited
     seed: int = 0
 
     # agent
@@ -34,15 +36,24 @@ class AppConfig:
     eps_decay: int = 20000
 
     # view
-    render_fps: int = 30
+    render_fps: int = 15
     sim_steps_per_frame: int = 1
     heatmap: bool = True
     policy: bool = False
     qhover: bool = True
     debug: bool = False
-    color_mode: str = 'pixel'
+    color_mode: str = 'neo'
     font_scale: float = 1.0
     reduced_motion: bool = False
+    sound_enabled: bool = True
+
+    # levels
+    level_mode: str = "preset"
+    level_index: int = 0
+    level_cycle: bool = True
+    n_walls: int = 18
+    n_traps: int = 0
+    food_enabled: bool = True
 
     # io defaults (persist last used paths so the viewer is usable without retyping)
     qtable_path: str = os.path.join('data', 'qtable_saved.pkl')
@@ -55,6 +66,11 @@ class AppConfig:
     train_eval_episodes: int = 50
     train_speed: int = 5  # episodes per update
     train_autosave: bool = True
+    train_curriculum: bool = True
+    train_curriculum_start: int = 5
+    train_curriculum_step: int = 5
+    train_curriculum_window: int = 50
+    train_curriculum_threshold: float = 0.8
 
 
 def load_config(path: str = CONFIG_PATH) -> AppConfig:
@@ -66,7 +82,7 @@ def load_config(path: str = CONFIG_PATH) -> AppConfig:
             if hasattr(cfg, k):
                 setattr(cfg, k, v)
         if getattr(cfg, "color_mode", None) in ("", None):
-            cfg.color_mode = "pixel"
+            cfg.color_mode = "neo"
         return cfg
     except Exception:
         return AppConfig()
@@ -103,6 +119,8 @@ class App:
         pygame.display.set_caption('Mini RL Survival')
         self.screen = pygame.display.set_mode((1800, 1080), pygame.RESIZABLE)
         self.clock = pygame.time.Clock()
+        self.sfx = SfxManager(enabled=bool(self.cfg.sound_enabled))
+        set_sfx_manager(self.sfx)
 
     def push_modal(self, modal: object) -> None:
         self._modal_stack.append(modal)
@@ -139,6 +157,8 @@ class App:
             self.theme.font_name = None
             self.theme.font_size = BASE_FONT_SIZE
             self.theme.font_size_title = BASE_TITLE_SIZE
+        if hasattr(self, "sfx"):
+            self.sfx.set_enabled(bool(self.cfg.sound_enabled))
 
     def run(self) -> None:
         self._running = True

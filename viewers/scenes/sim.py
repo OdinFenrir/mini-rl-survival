@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import math
 import os
+import random
 import time
+from dataclasses import dataclass
 
 import numpy as np
 import pygame
@@ -31,11 +34,24 @@ def _normalize(hm: np.ndarray) -> np.ndarray:
     return (hm - mn) / (mx - mn)
 
 
+@dataclass
+class Particle:
+    x: float
+    y: float
+    vx: float
+    vy: float
+    life: float
+    color: tuple[int, int, int]
+    size: float
+    gravity: float = 0.0
+
+
 class SimulationScene:
-    def __init__(self) -> None:
+    def __init__(self, agent_override: QLearningAgent | None = None) -> None:
         self.env: GridSurvivalEnv | None = None
         self.agent: QLearningAgent | None = None
         self.obs = None
+        self._agent_override = agent_override
 
         self.paused = False
         self.step_once = False
@@ -73,6 +89,16 @@ class SimulationScene:
         self._tile_cache: dict[tuple[int, int], pygame.Surface] = {}
         self._pixel_sprites: dict[str, pygame.Surface] = {}
         self._pixel_sprite_cache: dict[tuple[str, int], pygame.Surface] = {}
+        self._particles: list[Particle] = []
+        self._time = 0.0
+        self._agent_start = (0.0, 0.0)
+        self._agent_target = (0.0, 0.0)
+        self._agent_t = 1.0
+        self._agent_speed = 8.0
+        self._agent_render = (0.0, 0.0)
+        self._shake_time = 0.0
+        self._shake_mag = 0.0
+        self._food_bob_seed = random.random() * 10.0
 
     def _load_tileset(self) -> None:
         if self._tileset_surface is not None or self._tileset_meta is False:
@@ -93,6 +119,51 @@ class SimulationScene:
         except Exception:
             self._tileset_surface = None
             self._tileset_meta = False
+
+    def _set_agent_anim(self, start: tuple[int, int], target: tuple[int, int]) -> None:
+        self._agent_start = (float(start[0]), float(start[1]))
+        self._agent_target = (float(target[0]), float(target[1]))
+        self._agent_t = 0.0
+
+    def _agent_pos(self, dt: float) -> tuple[float, float]:
+        if self._agent_t < 1.0:
+            self._agent_t = min(1.0, self._agent_t + dt * self._agent_speed)
+        t = self._agent_t
+        # smoothstep easing
+        t = t * t * (3.0 - 2.0 * t)
+        ax = self._agent_start[0] + (self._agent_target[0] - self._agent_start[0]) * t
+        ay = self._agent_start[1] + (self._agent_target[1] - self._agent_start[1]) * t
+        return (ax, ay)
+
+    def _spawn_particles(self, pos: tuple[float, float], color: tuple[int, int, int], count: int, spread: float, size: float) -> None:
+        for _ in range(count):
+            ang = random.uniform(0, math.tau)
+            spd = random.uniform(20.0, 80.0) * spread
+            vx = math.cos(ang) * spd
+            vy = math.sin(ang) * spd
+            self._particles.append(Particle(pos[0], pos[1], vx, vy, life=random.uniform(0.35, 0.9), color=color, size=size, gravity=40.0))
+
+    def _update_particles(self, dt: float) -> None:
+        if not self._particles:
+            return
+        alive: list[Particle] = []
+        for p in self._particles:
+            p.life -= dt
+            if p.life <= 0:
+                continue
+            p.vy += p.gravity * dt
+            p.x += p.vx * dt
+            p.y += p.vy * dt
+            alive.append(p)
+        self._particles = alive
+
+    def _shake_offset(self) -> tuple[int, int]:
+        if self._shake_time <= 0.0:
+            return (0, 0)
+        t = self._time * 60.0
+        dx = int(math.sin(t * 1.7) * self._shake_mag)
+        dy = int(math.cos(t * 1.3) * self._shake_mag)
+        return (dx, dy)
 
     def _tile_surface(self, index: int, cell: int) -> pygame.Surface | None:
         if cell <= 0:
@@ -161,7 +232,14 @@ class SimulationScene:
             energy_start=int(cfg.energy_start),
             energy_food_gain=int(cfg.energy_food),
             energy_step_cost=int(cfg.energy_step),
+            energy_max=int(getattr(cfg, "energy_max", 0)),
             seed=int(cfg.seed),
+            level_mode=str(getattr(cfg, "level_mode", "preset")),
+            level_index=int(getattr(cfg, "level_index", 0)),
+            level_cycle=bool(getattr(cfg, "level_cycle", True)),
+            n_walls=int(getattr(cfg, "n_walls", 18)),
+            n_traps=int(getattr(cfg, "n_traps", int(cfg.hazards))),
+            food_enabled=bool(getattr(cfg, "food_enabled", True)),
         )
         qcfg = QLearningConfig(
             alpha=float(cfg.alpha),
@@ -172,24 +250,36 @@ class SimulationScene:
         )
         self.agent = QLearningAgent(n_actions=4, cfg=qcfg, seed=int(cfg.seed))
         self.obs = self.env.reset()
+        self._set_agent_anim(self.env.agent, self.env.agent)
+        self._agent_render = (float(self.env.agent[0]), float(self.env.agent[1]))
+        self._particles = []
+        self._shake_time = 0.0
+        self._shake_mag = 0.0
 
         # Auto-load a saved policy if available so "Start Simulation" feels purposeful.
         self.loaded_qtable_path = None
-        qpath = getattr(cfg, "qtable_path", os.path.join("data", "qtable_saved.pkl"))
-        if qpath and os.path.exists(qpath):
-            try:
-                self.agent = load_qtable(qpath, seed=int(cfg.seed))
-                self.loaded_qtable_path = qpath
-                app.toast.push(f"Auto-loaded Q-table: {os.path.basename(qpath)}")
-                self._heat_cache_key = None
-                self._heat_cache = None
-            except Exception as exc:
-                self.paused = True
-                app.toast.push(f"Auto-load failed: {exc}")
+        if self._agent_override is not None:
+            self.agent = self._agent_override
+            self.loaded_qtable_path = "<in-memory>"
+            app.toast.push("Using in-memory Q-table from training")
+            self._heat_cache_key = None
+            self._heat_cache = None
         else:
-            # No trained policy yet; start paused instead of running an untrained agent.
-            self.paused = True
-            app.toast.push("No Q-table loaded. Use 'Load Q-table' to play a trained agent.")
+            qpath = getattr(cfg, "qtable_path", os.path.join("data", "qtable_saved.pkl"))
+            if qpath and os.path.exists(qpath):
+                try:
+                    self.agent = load_qtable(qpath, seed=int(cfg.seed))
+                    self.loaded_qtable_path = qpath
+                    app.toast.push(f"Auto-loaded Q-table: {os.path.basename(qpath)}")
+                    self._heat_cache_key = None
+                    self._heat_cache = None
+                except Exception as exc:
+                    self.paused = True
+                    app.toast.push(f"Auto-load failed: {exc}")
+            else:
+                # No trained policy yet; start paused instead of running an untrained agent.
+                self.paused = True
+                app.toast.push("No Q-table loaded. Use 'Load Q-table' to play a trained agent.")
 
         self.show_heatmap = bool(cfg.heatmap)
         self.show_policy = bool(cfg.policy)
@@ -202,11 +292,29 @@ class SimulationScene:
 
         cfg = app.cfg
         qname = os.path.basename(self.loaded_qtable_path) if self.loaded_qtable_path else "None"
+        wall_count = len(self.env.walls) if self.env else 0
         actions += [
             ToolbarAction("Session", "", kind="header"),
             ToolbarAction(f"Q-table: {qname}", "", kind="text"),
-            ToolbarAction(f"Seed {cfg.seed}  Grid {cfg.w}x{cfg.h}  Haz {cfg.hazards}", "", kind="text"),
+            ToolbarAction(f"Seed {cfg.seed}  Grid {cfg.w}x{cfg.h}", "", kind="text"),
+            ToolbarAction(f"Walls {wall_count}  Food {'ON' if getattr(cfg, 'food_enabled', True) else 'OFF'}", "", kind="text"),
         ]
+        if self.env:
+            exit_state = "Unlocked" if (not getattr(self.env, "food_enabled", True) or bool(getattr(self.env, "food_collected", False))) else "Locked"
+            actions.append(ToolbarAction(f"Exit: {exit_state}", "", kind="text"))
+            total_levels = GridSurvivalEnv.preset_level_count()
+            if getattr(self.env, "level_mode", "preset") == "preset" and total_levels > 0:
+                level_label = f"{self.env.level_id + 1}/{total_levels}"
+            elif getattr(self.env, "level_mode", "preset") == "preset":
+                level_label = str(self.env.level_id + 1)
+            else:
+                level_label = "RND"
+            actions.append(ToolbarAction(f"Mode {self.env.level_mode}  Level {level_label}", "", kind="text"))
+            actions.append(ToolbarAction(f"Level: {self.env.level_name or 'Random'}", "", kind="text"))
+            if getattr(self.env, "level_style", ""):
+                actions.append(ToolbarAction(f"Style: {self.env.level_style}", "", kind="text"))
+            if getattr(self.env, "level_source", ""):
+                actions.append(ToolbarAction(f"Source: {self.env.level_source}", "", kind="text"))
 
         actions += [
             ToolbarAction('Controls', '', kind='header'),
@@ -264,6 +372,7 @@ class SimulationScene:
 
     def _reset_episode(self, app) -> None:
         self.obs = self.env.reset()
+        self._set_agent_anim(self.env.agent, self.env.agent)
         self._heat_cache_key = None
         self._heat_cache = None
         app.toast.push('Episode reset')
@@ -467,6 +576,12 @@ class SimulationScene:
         if self.env is None or self.agent is None:
             self._build(app)
 
+        self._time += dt
+        self._update_particles(dt)
+        if self._shake_time > 0.0:
+            self._shake_time = max(0.0, self._shake_time - dt)
+        self._agent_render = self._agent_pos(dt)
+
         steps = int(app.cfg.sim_steps_per_frame)
         if self.paused and not self.step_once:
             return
@@ -475,9 +590,11 @@ class SimulationScene:
         self.step_once = False
 
         for _ in range(steps):
+            prev_agent = self.env.agent
             a = self.agent.act(self.obs, greedy=self.greedy)
             res = self.env.step(a)
 
+            self._set_agent_anim(prev_agent, self.env.agent)
             self.last_action = a
             self.last_reward = float(res.reward)
             self.last_done = bool(res.done)
@@ -488,9 +605,26 @@ class SimulationScene:
             ep.total_reward += float(res.reward)
             if res.info.get('got_food'):
                 ep.foods += 1
+                cx, cy = self.env.agent
+                self._spawn_particles((float(cx) + 0.5, float(cy) + 0.5), app.theme.palette.ok, count=12, spread=1.0, size=2.0)
+                if hasattr(app, "sfx"):
+                    app.sfx.play("food")
+                app.toast.push("Food collected! Exit unlocked.")
 
             if res.done:
                 ep.terminal = str(res.info.get('terminal', ''))
+                if ep.terminal == "trap":
+                    self._shake_time = 0.25
+                    self._shake_mag = 4.0
+                    cx, cy = self.env.agent
+                    self._spawn_particles((float(cx) + 0.5, float(cy) + 0.5), app.theme.palette.danger, count=18, spread=1.2, size=2.4)
+                    if hasattr(app, "sfx"):
+                        app.sfx.play("hazard")
+                elif ep.terminal == "goal":
+                    cx, cy = self.env.agent
+                    self._spawn_particles((float(cx) + 0.5, float(cy) + 0.5), app.theme.palette.warn, count=14, spread=1.0, size=2.2)
+                    if hasattr(app, "sfx"):
+                        app.sfx.play("confirm")
                 self.telemetry_overlay.log_episode(ep.total_reward, ep.steps, ep.terminal)
                 self.stats.new_episode()
                 append_entry(
@@ -503,6 +637,7 @@ class SimulationScene:
                 )
                 self.run_history_overlay.reload()
                 self.obs = self.env.reset()
+                self._set_agent_anim(self.env.agent, self.env.agent)
             else:
                 self.obs = res.obs
 
@@ -514,14 +649,20 @@ class SimulationScene:
         return RenderContext(w=w, h=h, cell=cell, mx=mx, my=my, hud_h=0)
 
     def _heatmap(self) -> np.ndarray:
-        key = (len(self.agent.Q), self.env.width, self.env.height)
+        key = (len(self.agent.Q), self.env.width, self.env.height, self.env.level_id)
         if key == self._heat_cache_key and self._heat_cache is not None:
             return self._heat_cache
         heat = np.zeros((self.env.height, self.env.width), dtype=float)
         cnt = np.zeros_like(heat, dtype=int)
         for s, qvals in self.agent.Q.items():
             try:
-                ax, ay = int(s[0]), int(s[1])
+                if len(s) >= 8:
+                    lvl = int(s[0])
+                    ax, ay = int(s[1]), int(s[2])
+                    if lvl != self.env.level_id:
+                        continue
+                else:
+                    ax, ay = int(s[0]), int(s[1])
             except Exception:
                 continue
             if 0 <= ax < self.env.width and 0 <= ay < self.env.height and qvals:
@@ -557,12 +698,65 @@ class SimulationScene:
         hud_rect = pygame.Rect(x, y + board_h + pad, board_w, hud_h)
         return board_rect, hud_rect, sidebar_width
 
+    def _draw_hud_cards(self, screen: pygame.Surface, theme, area: pygame.Rect) -> None:
+        pad = int(10 * theme.ui_scale)
+        gap = int(10 * theme.ui_scale)
+        card_h = area.h
+        card_w = max(120, (area.w - 3 * gap) // 4)
+        x = area.x
+        y = area.y
+        font = theme.font(int(theme.font_size * theme.ui_scale))
+        small = theme.font(int(theme.font_size * 0.8 * theme.ui_scale))
+
+        def card(rect: pygame.Rect, title: str, value: str, bar: float | None = None) -> None:
+            theme.draw_rounded_panel(screen, rect, color=theme.palette.panel, border_radius=int(10 * theme.ui_scale))
+            t = small.render(title, True, theme.palette.muted)
+            v = font.render(value, True, theme.palette.fg)
+            screen.blit(t, (rect.x + pad, rect.y + pad))
+            screen.blit(v, (rect.x + pad, rect.y + pad + t.get_height() + 4))
+            if bar is not None:
+                bar = max(0.0, min(1.0, bar))
+                bw = rect.w - 2 * pad
+                bh = max(6, int(8 * theme.ui_scale))
+                by = rect.bottom - pad - bh
+                pygame.draw.rect(screen, theme.palette.grid0, (rect.x + pad, by, bw, bh), border_radius=4)
+                pygame.draw.rect(screen, theme.palette.accent, (rect.x + pad, by, int(bw * bar), bh), border_radius=4)
+
+        ep = self.stats.last()
+        energy = self.obs[-1] if self.obs else 0
+        cfg = self.env
+        if cfg and getattr(self.env, "energy_max", None) is not None:
+            energy_max = int(self.env.energy_max)
+        else:
+            energy_max = int(cfg.energy_start + cfg.energy_food_gain) if cfg else max(1, energy)
+            energy_max = max(energy_max, int(energy))
+        epsilon = self.agent.epsilon() if self.agent else 0.0
+
+        r1 = pygame.Rect(x + 0 * (card_w + gap), y, card_w, card_h)
+        r2 = pygame.Rect(x + 1 * (card_w + gap), y, card_w, card_h)
+        r3 = pygame.Rect(x + 2 * (card_w + gap), y, card_w, card_h)
+        r4 = pygame.Rect(x + 3 * (card_w + gap), y, card_w, card_h)
+        level_text = "RND"
+        if getattr(self.env, "level_mode", "preset") == "preset":
+            total_levels = GridSurvivalEnv.preset_level_count()
+            if total_levels > 0:
+                level_text = f"{self.env.level_id + 1}/{total_levels}"
+            else:
+                level_text = str(self.env.level_id + 1)
+        card(r1, "Level", level_text)
+        card(r2, "Steps", str(ep.steps))
+        card(r3, "Energy", f"{energy}", bar=energy / max(1, energy_max))
+        card(r4, "Epsilon", f"{epsilon:.2f}", bar=epsilon)
+
     def _render_sidebar(self, app, screen, sidebar_width: int) -> None:
         theme = app.theme
         pad = int(12 * theme.ui_scale)
         sidebar_rect = pygame.Rect(0, 0, sidebar_width, screen.get_height())
-        sidebar_color = theme.palette.panel if theme.ui_style == "pixel" else theme.palette.grid1
-        pygame.draw.rect(screen, sidebar_color, sidebar_rect)
+        if theme.ui_style == "pixel":
+            sidebar_color = theme.palette.panel
+            pygame.draw.rect(screen, sidebar_color, sidebar_rect)
+        else:
+            theme.draw_gradient_panel(screen, sidebar_rect, theme.palette.panel, theme.palette.grid1, border_radius=0)
 
         inner_x = pad
         inner_y = pad
@@ -577,6 +771,9 @@ class SimulationScene:
             self._build(app)
         screen.fill(app.theme.palette.bg)
         board_rect, hud_rect, sidebar_width = self._layout_rects(app, screen)
+        dx, dy = self._shake_offset()
+        board_rect = board_rect.move(dx, dy)
+        hud_rect = hud_rect.move(dx, dy)
         self._render_sidebar(app, screen, sidebar_width)
         shadow = pygame.Surface((board_rect.w + 16, board_rect.h + 16), pygame.SRCALPHA)
         pygame.draw.rect(shadow, (0, 0, 0, 90), shadow.get_rect(), border_radius=int(18 * app.theme.ui_scale))
@@ -584,8 +781,18 @@ class SimulationScene:
         scale = float(app.theme.ui_scale)
         border_radius = int(16 * scale)
         pixel_style = app.theme.ui_style == "pixel"
-        pygame.draw.rect(screen, app.theme.palette.grid1, board_rect, border_radius=border_radius if not pixel_style else 0)
-        pygame.draw.rect(screen, app.theme.palette.grid_line, board_rect, width=2, border_radius=border_radius if not pixel_style else 0)
+        use_tiles = not pixel_style and app.theme.ui_style not in ("neo", "modern")
+        if pixel_style:
+            pygame.draw.rect(screen, app.theme.palette.grid1, board_rect, border_radius=0)
+            pygame.draw.rect(screen, app.theme.palette.grid_line, board_rect, width=2, border_radius=0)
+        else:
+            app.theme.draw_gradient_panel(
+                screen,
+                board_rect,
+                app.theme.palette.grid1,
+                app.theme.palette.grid0,
+                border_radius=border_radius,
+            )
         rc = self._rc(app, board_rect)
         rc_local = self._rc(app, pygame.Rect(0, 0, board_rect.w, board_rect.h))
 
@@ -593,9 +800,10 @@ class SimulationScene:
         heatmap_opacity = float(getattr(app.cfg, "heatmap_opacity", 0.7))
         board_surface = pygame.Surface((board_rect.w, board_rect.h), pygame.SRCALPHA)
 
-        floor_a = None if pixel_style else self._tile_surface(0, rc_local.cell)
-        floor_b = None if pixel_style else (self._tile_surface(1, rc_local.cell) or floor_a)
+        floor_a = None if not use_tiles else self._tile_surface(0, rc_local.cell)
+        floor_b = None if not use_tiles else (self._tile_surface(1, rc_local.cell) or floor_a)
 
+        wall_set = set(getattr(self.env, "walls", []))
         for y in range(self.env.height):
             for x in range(self.env.width):
                 r = rc_local.cell_rect(x, y)
@@ -606,6 +814,8 @@ class SimulationScene:
                     base = app.theme.palette.grid0 if (x + y) % 2 == 0 else app.theme.palette.grid1
                     pygame.draw.rect(board_surface, base, r, border_radius=0 if pixel_style else max(1, rc_local.cell // 8))
                 if hm is not None:
+                    if (x, y) in wall_set:
+                        continue
                     v = float(hm[y, x])
                     if v > 0:
                         shade = int(40 + 180 * v)
@@ -643,13 +853,64 @@ class SimulationScene:
             hazard_sprite = self._pixel_sprite("hazard", sprite_scale)
             food_sprite = self._pixel_sprite("food", sprite_scale)
             agent_sprite = self._pixel_sprite("agent", sprite_scale)
-        else:
+        elif use_tiles:
             hazard_sprite = self._tile_surface(357, sprite_scale)
             food_sprite = self._tile_surface(371, sprite_scale)
             agent_sprite = self._tile_surface(168, sprite_scale)
+        else:
+            hazard_sprite = None
+            food_sprite = None
+            agent_sprite = None
 
         def blit_center(surface: pygame.Surface, sprite: pygame.Surface, center: tuple[int, int]) -> None:
             surface.blit(sprite, (center[0] - sprite.get_width() // 2, center[1] - sprite.get_height() // 2))
+
+        def cell_center_float(pos: tuple[float, float]) -> tuple[float, float]:
+            return (
+                rc_local.mx + (pos[0] + 0.5) * rc_local.cell,
+                rc_local.my + (pos[1] + 0.5) * rc_local.cell,
+            )
+
+        # Walls
+        wall_color = app.theme.palette.grid_line if pixel_style else app.theme.palette.grid1
+        wall_inner = app.theme.palette.grid0
+        for wx, wy in getattr(self.env, "walls", []):
+            r = rc_local.cell_rect(wx, wy)
+            pygame.draw.rect(board_surface, wall_color, r, border_radius=0 if pixel_style else max(2, rc_local.cell // 6))
+            if not pixel_style:
+                inset = max(1, rc_local.cell // 10)
+                inner = pygame.Rect(r.x + inset, r.y + inset, r.w - 2 * inset, r.h - 2 * inset)
+                pygame.draw.rect(board_surface, wall_inner, inner, border_radius=max(1, rc_local.cell // 8))
+
+        # Goal (unlock after food is collected)
+        gx, gy = self.env.goal
+        gcx, gcy = rc_local.cell_center(gx, gy)
+        goal_visible = (not getattr(self.env, "food_enabled", True)) or bool(getattr(self.env, "food_collected", False))
+        if goal_visible:
+            if pixel_style:
+                gr = rc_local.cell_rect(gx, gy)
+                pygame.draw.rect(board_surface, app.theme.palette.warn, gr, border_radius=0)
+                pygame.draw.rect(board_surface, app.theme.palette.grid_line, gr, width=2)
+            else:
+                draw_glow(board_surface, (gcx, gcy), int(rc_local.cell * 0.5), app.theme.palette.warn, 120)
+                pygame.draw.circle(board_surface, app.theme.palette.warn, (gcx, gcy), max(4, rc_local.cell // 3))
+                pygame.draw.circle(board_surface, app.theme.palette.bg, (gcx, gcy), max(2, rc_local.cell // 6))
+        else:
+            lock_color = app.theme.palette.muted
+            if pixel_style:
+                gr = rc_local.cell_rect(gx, gy)
+                pygame.draw.rect(board_surface, app.theme.palette.grid0, gr, border_radius=0)
+                pygame.draw.rect(board_surface, app.theme.palette.grid_line, gr, width=2)
+                pygame.draw.line(board_surface, lock_color, gr.topleft, gr.bottomright, 2)
+                pygame.draw.line(board_surface, lock_color, gr.topright, gr.bottomleft, 2)
+            else:
+                r = rc_local.cell
+                pygame.draw.circle(board_surface, (*lock_color, 90), (gcx, gcy), max(6, r // 3))
+                body_w = max(8, r // 3)
+                body_h = max(6, r // 4)
+                body = pygame.Rect(gcx - body_w // 2, gcy - body_h // 2, body_w, body_h)
+                pygame.draw.rect(board_surface, lock_color, body, border_radius=4)
+                pygame.draw.circle(board_surface, lock_color, (gcx, gcy - body_h // 2), max(4, body_w // 2), 2)
 
         for hx, hy in self.env.hazards:
             cx, cy = rc_local.cell_center(hx, hy)
@@ -658,7 +919,7 @@ class SimulationScene:
             if hazard_sprite:
                 blit_center(board_surface, hazard_sprite, (cx, cy))
             else:
-                # Draw hazard: triangle with exclamation
+                # Draw trap: triangle with exclamation
                 points = [
                     (cx, cy - rc_local.cell // 3),
                     (cx - rc_local.cell // 3, cy + rc_local.cell // 3),
@@ -672,25 +933,29 @@ class SimulationScene:
                 board_surface.blit(ex, (cx - ex.get_width() // 2, cy - ex.get_height() // 2))
 
         fx, fy = self.env.food
-        cx, cy = rc_local.cell_center(fx, fy)
-        # Draw food
-        if not pixel_style:
-            draw_glow(board_surface, (cx, cy), int(rc_local.cell * 0.55), app.theme.palette.ok, 120)
-        if food_sprite:
-            blit_center(board_surface, food_sprite, (cx, cy))
-        else:
-            pygame.draw.circle(board_surface, app.theme.palette.ok, (cx, cy), max(3, rc_local.cell // 2 - 10))
-            leaf_x = cx + rc_local.cell // 6
-            leaf_y = cy - rc_local.cell // 3
-            pygame.draw.ellipse(board_surface, (60, 200, 60), (leaf_x, leaf_y, rc_local.cell // 6, rc_local.cell // 8))
+        if fx >= 0 and fy >= 0:
+            cx, cy = rc_local.cell_center(fx, fy)
+            # Draw food
+            if not pixel_style:
+                draw_glow(board_surface, (cx, cy), int(rc_local.cell * 0.55), app.theme.palette.ok, 120)
+            if food_sprite:
+                bob = math.sin(self._time * 3.2 + self._food_bob_seed) * (rc_local.cell * 0.06)
+                blit_center(board_surface, food_sprite, (cx, int(cy + bob)))
+            else:
+                pygame.draw.circle(board_surface, app.theme.palette.ok, (cx, cy), max(3, rc_local.cell // 2 - 10))
+                leaf_x = cx + rc_local.cell // 6
+                leaf_y = cy - rc_local.cell // 3
+                pygame.draw.ellipse(board_surface, (60, 200, 60), (leaf_x, leaf_y, rc_local.cell // 6, rc_local.cell // 8))
 
         ax, ay = self.env.agent
-        cx, cy = rc_local.cell_center(ax, ay)
+        axf, ayf = self._agent_render
+        cx, cy = cell_center_float((axf, ayf))
         # Draw agent
         if not pixel_style:
             draw_glow(board_surface, (cx, cy), int(rc_local.cell * 0.55), app.theme.palette.accent, 110)
         if agent_sprite:
-            blit_center(board_surface, agent_sprite, (cx, cy))
+            bob = math.sin(self._time * 4.0) * (rc_local.cell * 0.04)
+            blit_center(board_surface, agent_sprite, (int(cx), int(cy + bob)))
         else:
             pygame.draw.circle(board_surface, app.theme.palette.accent, (cx, cy), max(4, rc_local.cell // 2 - 6))
             pygame.draw.circle(board_surface, app.theme.palette.fg, (cx, cy), max(2, rc_local.cell // 2 - 12), 2)
@@ -700,21 +965,32 @@ class SimulationScene:
             pygame.draw.circle(board_surface, (30, 30, 60), (cx - eye_dx, cy - eye_dy), max(1, rc_local.cell // 12))
             pygame.draw.circle(board_surface, (30, 30, 60), (cx + eye_dx, cy - eye_dy), max(1, rc_local.cell // 12))
 
+        # Particles
+        for p in self._particles:
+            px = int(rc_local.mx + p.x * rc_local.cell)
+            py = int(rc_local.my + p.y * rc_local.cell)
+            pygame.draw.circle(board_surface, (*p.color, 200), (px, py), max(1, int(p.size)))
+
         screen.blit(board_surface, board_rect.topleft)
 
+        level_label = getattr(self.env, "level_name", "")
+        level_desc = getattr(self.env, "level_desc", "")
+        if level_label:
+            info_font = app.theme.font(int(app.theme.font_size * 0.78 * app.theme.ui_scale))
+            info_pad = int(6 * app.theme.ui_scale)
+            label_surf = info_font.render(level_label, True, app.theme.palette.accent)
+            info_y = max(0, board_rect.y - label_surf.get_height() - info_pad)
+            screen.blit(label_surf, (board_rect.x, info_y))
+            if level_desc:
+                desc_surf = app.theme.font(int(app.theme.font_size * 0.7 * app.theme.ui_scale)).render(level_desc, True, app.theme.palette.muted)
+                screen.blit(desc_surf, (board_rect.x, info_y + label_surf.get_height() + info_pad // 2))
         if self.show_policy:
-            self.policy_overlay.render(screen, app.theme, self.agent, rc)
+            self.policy_overlay.render(screen, app.theme, self.agent, rc, level_id=self.env.level_id, blocked=wall_set)
         if self.show_qhover:
-            self.qvalues_overlay.render(screen, app.theme, self.agent, rc, pygame.mouse.get_pos())
+            self.qvalues_overlay.render(screen, app.theme, self.agent, rc, pygame.mouse.get_pos(), level_id=self.env.level_id)
 
         ep = self.stats.last()
-        hud = (
-            f'Ep {ep.episode}  Steps {ep.steps}  Foods {ep.foods}  '
-            f'Energy {self.obs[4]}  Qstates {len(self.agent.Q)}  '
-            f'Eps {self.agent.epsilon():.3f}  Mode {'GREEDY' if self.greedy else 'EPS'}  '
-            f"{'PAUSED' if self.paused else ''}"
-        )
-        self.stats_overlay.render(screen, app.theme, hud, area=hud_rect)
+        self._draw_hud_cards(screen, app.theme, hud_rect)
 
         if self.show_debug:
             self.debug_overlay.render(
@@ -729,9 +1005,6 @@ class SimulationScene:
 
         if self.show_help:
             self.help_overlay.render(screen, app.theme)
-
-        if self.show_telemetry:
-            self.telemetry_overlay.render(screen, app.theme, pos=(24, 64))
 
         if self.show_telemetry:
             pad = int(12 * app.theme.ui_scale)

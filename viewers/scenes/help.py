@@ -42,15 +42,20 @@ class HelpScene:
         font = app.theme.font(int(app.theme.font_size * app.theme.ui_scale))
         small = app.theme.font(int(app.theme.font_size * 0.9 * app.theme.ui_scale))
         sections: list[tuple[str, list[str]]] = [
-            ("Goal", ["Survive as long as possible, collect food, avoid hazards."]),
+            ("Goal", ["Collect the food first, then the exit (goal) unlocks."]),
             ("Quick start", [
                 "1) Start / Continue: explore the environment with the current agent.",
                 "2) Load Q-table & Start: watch a trained agent play immediately.",
-                "3) Use Settings to tweak grid size, hazards, and learning params.",
+                "3) Use Settings to tweak grid size and learning params.",
+            ]),
+            ("Levels", [
+                "Preset mode cycles through curated levels with clear goals.",
+                "Random mode generates new walls each reset for variety.",
             ]),
             ("What you are seeing", [
                 "Agent (blue) moves on the grid; food (green) adds energy.",
-                "Hazards (red) end the episode; energy drops each step.",
+                "Goal (gold) appears after you collect food.",
+                "Walls (dark) block movement.",
                 "Heatmap (H): higher values indicate better long-term reward.",
                 "Policy arrows (P): best action per cell from the Q-table.",
                 "Q-hover (Q): shows per-action Q-values for the hovered cell.",

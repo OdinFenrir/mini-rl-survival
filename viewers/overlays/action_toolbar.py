@@ -62,10 +62,23 @@ class ActionToolbar:
         viewport = pygame.Rect(x, y, width, height)
         self._viewport = viewport
 
-        panel = pygame.Surface((viewport.w, viewport.h), pygame.SRCALPHA)
-        panel.fill((*theme.palette.panel, theme.palette.panel_alpha))
-        pygame.draw.rect(panel, theme.palette.grid_line, panel.get_rect(), 1, border_radius=12)
-        screen.blit(panel, viewport.topleft)
+        if theme.ui_style == "pixel":
+            panel = pygame.Surface((viewport.w, viewport.h), pygame.SRCALPHA)
+            panel.fill((*theme.palette.panel, theme.palette.panel_alpha))
+            pygame.draw.rect(panel, theme.palette.grid_line, panel.get_rect(), 1, border_radius=0)
+            screen.blit(panel, viewport.topleft)
+        else:
+            radius = int(14 * theme.ui_scale)
+            shadow = pygame.Surface((viewport.w, viewport.h), pygame.SRCALPHA)
+            pygame.draw.rect(shadow, (0, 0, 0, 70), shadow.get_rect(), border_radius=radius)
+            screen.blit(shadow, (viewport.x + int(4 * theme.ui_scale), viewport.y + int(6 * theme.ui_scale)))
+            theme.draw_gradient_panel(
+                screen,
+                viewport,
+                theme.palette.panel,
+                theme.palette.grid1,
+                border_radius=radius,
+            )
 
         scale = 0.9 if theme.ui_style == "pixel" else 1.0
         font = theme.font(int(theme.font_size * theme.ui_scale * scale))

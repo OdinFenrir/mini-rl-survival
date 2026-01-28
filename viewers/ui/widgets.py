@@ -6,6 +6,19 @@ from typing import Callable, Optional
 import pygame
 
 from .theme import Theme
+from .sfx import SfxManager
+
+_SFX: SfxManager | None = None
+
+
+def set_sfx_manager(manager: SfxManager | None) -> None:
+    global _SFX
+    _SFX = manager
+
+
+def _play_sfx(name: str) -> None:
+    if _SFX:
+        _SFX.play(name)
 
 
 @dataclass
@@ -35,9 +48,7 @@ class ToastManager:
         for t in self._items[-3:]:
             surf = font.render(t.text, True, theme.palette.fg)
             box = pygame.Rect(x, y, surf.get_width() + 2 * pad, surf.get_height() + 2 * pad)
-            panel = pygame.Surface((box.w, box.h), pygame.SRCALPHA)
-            panel.fill((*theme.palette.panel, theme.palette.panel_alpha))
-            screen.blit(panel, box.topleft)
+            theme.draw_rounded_panel(screen, box, color=theme.palette.panel, border_radius=int(10 * theme.ui_scale))
             screen.blit(surf, (x + pad, y + pad))
             y += box.h + pad
 
@@ -103,9 +114,11 @@ class Button(Widget):
         if not self.enabled:
             return False
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.rect.collidepoint(event.pos):
+            _play_sfx("click")
             self.on_click()
             return True
         if focused and event.type == pygame.KEYDOWN and event.key in (pygame.K_RETURN, pygame.K_SPACE):
+            _play_sfx("click")
             self.on_click()
             return True
         return False
@@ -160,10 +173,27 @@ class Button(Widget):
             surf = font.render(label, True, text_color)
             screen.blit(surf, (text_x, text_y))
         else:
+            radius = int(14 * theme.ui_scale)
+            # Soft shadow
+            shadow = pygame.Surface((r.w, r.h), pygame.SRCALPHA)
+            pygame.draw.rect(shadow, (0, 0, 0, 80), shadow.get_rect(), border_radius=radius)
+            screen.blit(shadow, (r.x, r.y + int(4 * theme.ui_scale)))
             if focused:
-                theme.draw_gradient_panel(screen, r, theme.palette.accent, theme.palette.accent, border_radius=int(14 * theme.ui_scale))
+                theme.draw_gradient_panel(
+                    screen,
+                    r,
+                    theme.palette.accent,
+                    theme.palette.grid1,
+                    border_radius=radius,
+                )
             else:
-                theme.draw_rounded_panel(screen, r, color=theme.palette.grid1, border_radius=int(12 * theme.ui_scale))
+                theme.draw_gradient_panel(
+                    screen,
+                    r,
+                    theme.palette.grid0,
+                    theme.palette.grid1,
+                    border_radius=radius,
+                )
             font = theme.font(int(theme.font_size * theme.ui_scale))
             surf = font.render(self.text, True, theme.palette.fg)
             screen.blit(surf, (r.centerx - surf.get_width() // 2, r.centery - surf.get_height() // 2))
@@ -182,9 +212,11 @@ class Toggle(Widget):
         if not self.enabled:
             return False
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.rect.collidepoint(event.pos):
+            _play_sfx("click")
             self.set_value(not self.get_value())
             return True
         if focused and event.type == pygame.KEYDOWN and event.key in (pygame.K_RETURN, pygame.K_SPACE):
+            _play_sfx("click")
             self.set_value(not self.get_value())
             return True
         return False
@@ -230,14 +262,17 @@ class Slider(Widget):
         if not self.enabled:
             return False
         if focused and event.type == pygame.KEYDOWN and event.key in (pygame.K_LEFT, pygame.K_a):
+            _play_sfx("click")
             self.set_value(self._clamp(self.get_value() - self.step))
             return True
         if focused and event.type == pygame.KEYDOWN and event.key in (pygame.K_RIGHT, pygame.K_d):
+            _play_sfx("click")
             self.set_value(self._clamp(self.get_value() + self.step))
             return True
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.rect.collidepoint(event.pos):
             t = (event.pos[0] - self.rect.x) / max(1, self.rect.w)
             v = self.vmin + t * (self.vmax - self.vmin)
+            _play_sfx("click")
             self.set_value(self._clamp(v))
             return True
         return False
@@ -249,14 +284,22 @@ class Slider(Widget):
         label_surf = font.render(self.text, True, theme.palette.fg)
         val = self.get_value()
         val_surf = font.render(self.fmt.format(val), True, theme.palette.accent if focused else theme.palette.fg)
-        # Draw bar
-        bar_rect = pygame.Rect(r.x + 10, r.centery - 8, r.w - 120, 16)
+        pad = int(8 * theme.ui_scale)
+        # Draw label/value on the top row
+        label_y = r.y + pad
+        screen.blit(label_surf, (r.x + pad, label_y))
+        screen.blit(val_surf, (r.right - val_surf.get_width() - pad, label_y))
+
+        # Draw bar under the label row
+        bar_h = max(10, int(12 * theme.ui_scale))
+        bar_w = max(20, r.w - 2 * pad)
+        label_h = label_surf.get_height()
+        bar_y = r.y + pad + label_h + int(6 * theme.ui_scale)
+        bar_y = min(bar_y, r.bottom - bar_h - pad)
+        bar_rect = pygame.Rect(r.x + pad, bar_y, bar_w, bar_h)
         pygame.draw.rect(screen, theme.palette.panel, bar_rect, border_radius=8)
         denom = max(1e-9, self.vmax - self.vmin)
         fill_w = int((val - self.vmin) / denom * (bar_rect.w - 4))
         pygame.draw.rect(screen, theme.palette.accent, (bar_rect.x + 2, bar_rect.y + 2, fill_w, bar_rect.h - 4), border_radius=6)
         if focused:
             pygame.draw.rect(screen, theme.palette.accent, r, width=4, border_radius=int(14 * theme.ui_scale))
-        # Draw label and value
-        screen.blit(label_surf, (r.x + 10, r.y + 4))
-        screen.blit(val_surf, (r.right - val_surf.get_width() - 16, r.y + 4))
