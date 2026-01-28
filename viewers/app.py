@@ -71,6 +71,9 @@ class AppConfig:
     train_curriculum_step: int = 5
     train_curriculum_window: int = 50
     train_curriculum_threshold: float = 0.8
+    train_curriculum_eps_rewind: float = 0.5
+    train_checkpoint_every: int = 500
+    train_use_settings_for_play: bool = True
 
 
 def load_config(path: str = CONFIG_PATH) -> AppConfig:

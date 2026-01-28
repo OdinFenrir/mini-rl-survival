@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import asdict
 from typing import Iterable
 
@@ -20,7 +21,7 @@ def append_entry(
 ) -> None:
     os.makedirs(os.path.dirname(LOG_PATH) or '.', exist_ok=True)
     entry = {
-        'timestamp': float(timestamp or 0.0),
+        'timestamp': float(time.time() if timestamp is None else timestamp),
         'episode': int(episode),
         'steps': int(steps),
         'reward': float(reward),

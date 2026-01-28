@@ -387,7 +387,8 @@ class SettingsScene:
         # Draw footer (fixed buttons)
         focused = self.focus.focused()
         for w in self.footer_widgets:
-            w.draw(screen, app.theme, focused=(w is focused))        # Hint (placed under title so it never overlaps footer buttons)
+            w.draw(screen, app.theme, focused=(w is focused))
+        # Hint (placed under title so it never overlaps footer buttons)
         font = app.theme.font(int(app.theme.font_size * app.theme.ui_scale))
         hint = font.render("Scroll: mouse wheel / PgUp-PgDn | Tab to navigate | Esc to go back", True, app.theme.palette.muted)
         hint_y = int(30 * app.theme.ui_scale) + title.get_height() + int(10 * app.theme.ui_scale)

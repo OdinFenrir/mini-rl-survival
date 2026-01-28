@@ -8,6 +8,7 @@ import pygame
 
 from core.env import GridSurvivalEnv
 from core.qlearning import QLearningAgent, QLearningConfig
+from viewers.io.export import export_csv, export_json
 from viewers.scenes.sim import SimulationScene
 from viewers.ui.modals import FileDialogModal, ConfirmDialog
 from viewers.ui.widgets import Button, Slider, Toggle, FocusManager, Label
@@ -28,10 +29,13 @@ class TrainingScene:
         self.map_stats: dict[int, dict[str, int]] = {}
         self._recent_success: deque[int] = deque(maxlen=50)
         self.curriculum_limit: int | None = None
+        self.last_train_settings: dict[str, object] | None = None
+        self.last_map_eval: list[dict[str, object]] | None = None
 
     def _build_env_agent(self, app) -> None:
         cfg = app.cfg
         self._sync_curriculum(app)
+        self.last_train_settings = self._collect_env_settings(cfg)
         self.env = GridSurvivalEnv(
             width=int(cfg.w),
             height=int(cfg.h),
@@ -59,25 +63,51 @@ class TrainingScene:
         if self.agent is None:
             self.agent = QLearningAgent(n_actions=4, cfg=qcfg, seed=int(cfg.seed))
 
-    def _run_episode(self, train: bool, max_steps: int) -> tuple[int, int, float, str]:
-        assert self.env is not None and self.agent is not None
-        obs = self.env.reset()
+    @staticmethod
+    def _collect_env_settings(cfg) -> dict[str, object]:
+        return {
+            "width": int(cfg.w),
+            "height": int(cfg.h),
+            "n_hazards": int(cfg.hazards),
+            "energy_start": int(cfg.energy_start),
+            "energy_food_gain": int(cfg.energy_food),
+            "energy_step_cost": int(cfg.energy_step),
+            "energy_max": int(getattr(cfg, "energy_max", 0)),
+            "seed": int(cfg.seed),
+            "level_mode": str(getattr(cfg, "level_mode", "preset")),
+            "level_index": int(getattr(cfg, "level_index", 0)),
+            "level_cycle": bool(getattr(cfg, "level_cycle", True)),
+            "n_walls": int(getattr(cfg, "n_walls", 18)),
+            "n_traps": int(getattr(cfg, "n_traps", int(cfg.hazards))),
+            "food_enabled": bool(getattr(cfg, "food_enabled", True)),
+        }
+
+    def _run_episode_env(self, env: GridSurvivalEnv, agent: QLearningAgent, max_steps: int, train: bool) -> tuple[int, int, float, str]:
+        obs = env.reset()
         total_reward = 0.0
         foods = 0
         terminal = ""
+        done = False
         for _ in range(max_steps):
-            a = self.agent.act(obs, greedy=not train)
-            res = self.env.step(a)
+            a = agent.act(obs, greedy=not train)
+            res = env.step(a)
             if train:
-                self.agent.learn(obs, a, res.reward, res.obs, res.done)
+                agent.learn(obs, a, res.reward, res.obs, res.done)
             total_reward += res.reward
             if res.info.get("got_food"):
                 foods += 1
             obs = res.obs
             if res.done:
                 terminal = res.info.get("terminal", "")
+                done = True
                 break
-        return self.env.steps, foods, float(total_reward), terminal
+        if not done:
+            terminal = "timeout"
+        return env.steps, foods, float(total_reward), terminal
+
+    def _run_episode(self, train: bool, max_steps: int) -> tuple[int, int, float, str]:
+        assert self.env is not None and self.agent is not None
+        return self._run_episode_env(self.env, self.agent, max_steps=max_steps, train=train)
 
     def _eval_stats(self, episodes: int, max_steps: int) -> str:
         steps_list = []
@@ -142,8 +172,11 @@ class TrainingScene:
             self.env.level_limit = self.curriculum_limit
         self._recent_success.clear()
         if self.agent is not None:
-            self.agent.total_steps = int(self.agent.total_steps * 0.5)
-        app.toast.push(f"Curriculum unlocked: {self.curriculum_limit}/{total} levels")
+            rewind = float(getattr(cfg, "train_curriculum_eps_rewind", 0.5))
+            rewind = max(0.0, min(1.0, rewind))
+            if rewind < 1.0:
+                self.agent.total_steps = int(self.agent.total_steps * rewind)
+        self._save_checkpoint(app, label=f"Curriculum unlocked: {self.curriculum_limit}/{total} levels")
 
     def _layout(self, app) -> None:
         w, h = app.screen.get_size()
@@ -184,6 +217,15 @@ class TrainingScene:
                             lambda: float(cfg.train_speed), lambda v: setattr(cfg, "train_speed", int(v)), fmt="{:.0f}")); left_i += 1
         items.append(Toggle(rect_left(left_i), "Autosave on finish",
                             lambda: bool(cfg.train_autosave), lambda b: setattr(cfg, "train_autosave", bool(b)))); left_i += 1
+        items.append(Slider(rect_left(left_i), "Checkpoint every", 0, 5000, 100,
+                            lambda: float(getattr(cfg, "train_checkpoint_every", 0)),
+                            lambda v: setattr(cfg, "train_checkpoint_every", int(v)), fmt="{:.0f}")); left_i += 1
+
+        items.append(Button(rect_left(left_i), "Test all maps", lambda: self._eval_all_maps(app))); left_i += 1
+        items.append(Button(rect_left(left_i), "Export map stats", lambda: self._open_export_map_stats(app))); left_i += 1
+        items.append(Button(rect_left(left_i), "Start / Resume", lambda: self._start(app))); left_i += 1
+        items.append(Button(rect_left(left_i), "Pause", lambda: self._pause())); left_i += 1
+        items.append(Button(rect_left(left_i), "Reset progress", lambda: self._reset(app))); left_i += 1
 
         total_levels = GridSurvivalEnv.preset_level_count()
         max_levels = max(1, total_levels)
@@ -203,11 +245,13 @@ class TrainingScene:
         items.append(Slider(rect_right(right_i), "Window (episodes)", 10, 200, 10,
                             lambda: float(getattr(cfg, "train_curriculum_window", 50)),
                             lambda v: setattr(cfg, "train_curriculum_window", int(v)), fmt="{:.0f}")); right_i += 1
+        items.append(Slider(rect_right(right_i), "Eps rewind", 0.0, 1.0, 0.05,
+                            lambda: float(getattr(cfg, "train_curriculum_eps_rewind", 0.5)),
+                            lambda v: setattr(cfg, "train_curriculum_eps_rewind", float(v)), fmt="{:.2f}")); right_i += 1
+        items.append(Toggle(rect_right(right_i), "Use training settings",
+                            lambda: bool(getattr(cfg, "train_use_settings_for_play", True)),
+                            lambda b: setattr(cfg, "train_use_settings_for_play", bool(b)))); right_i += 1
 
-        items.append(Label(rect_right(right_i), "Actions")); right_i += 1
-        items.append(Button(rect_right(right_i), "Start / Resume", lambda: self._start(app))); right_i += 1
-        items.append(Button(rect_right(right_i), "Pause", lambda: self._pause())); right_i += 1
-        items.append(Button(rect_right(right_i), "Reset progress", lambda: self._reset(app))); right_i += 1
         items.append(Button(rect_right(right_i), "Delete Q-table file", lambda: self._open_delete_file(app))); right_i += 1
         items.append(Button(rect_right(right_i), "Delete all training files", lambda: self._confirm_delete_training(app))); right_i += 1
         items.append(Button(rect_right(right_i), "Save Q-table", lambda: self._open_save(app))); right_i += 1
@@ -223,6 +267,7 @@ class TrainingScene:
             self._build_env_agent(app)
         else:
             self._sync_curriculum(app)
+            self.last_train_settings = self._collect_env_settings(app.cfg)
         self.training = True
 
     def _pause(self) -> None:
@@ -239,6 +284,7 @@ class TrainingScene:
         self.map_stats.clear()
         self._recent_success.clear()
         self.curriculum_limit = None
+        self.last_map_eval = None
         self.last_eval = ""
         self._build_env_agent(app)
 
@@ -312,6 +358,122 @@ class TrainingScene:
         else:
             app.toast.push("No training files found")
 
+    def _save_checkpoint(self, app, label: str = "Checkpoint saved") -> None:
+        cfg = app.cfg
+        if not self.agent:
+            return
+        path = getattr(cfg, "qtable_path", os.path.join("data", "qtable_saved.pkl"))
+        try:
+            self.agent.save(path)
+            if label:
+                app.toast.push(label)
+        except Exception as exc:
+            app.toast.push(f"Checkpoint failed: {exc}")
+
+    def _map_stats_rows(self) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        source = self.last_map_eval if self.last_map_eval else []
+        if source:
+            return list(source)
+        for level_id, stats in self.map_stats.items():
+            plays = max(1, stats.get("plays", 0))
+            goals = stats.get("goals", 0)
+            foods = stats.get("foods", 0)
+            template = GridSurvivalEnv.get_level_template(level_id)
+            rows.append(
+                {
+                    "level_id": level_id,
+                    "level_index": level_id + 1,
+                    "name": (template or {}).get("name", f"Level {level_id + 1}"),
+                    "plays": plays,
+                    "goals": goals,
+                    "foods": foods,
+                    "success_rate": goals / plays,
+                    "food_rate": foods / plays,
+                }
+            )
+        return rows
+
+    def _eval_all_maps(self, app) -> None:
+        if not self.agent:
+            app.toast.push("Train or load a Q-table first.")
+            return
+        self.training = False
+        total = GridSurvivalEnv.preset_level_count()
+        if total <= 0:
+            app.toast.push("No preset maps available.")
+            return
+        cfg = app.cfg
+        settings = self.last_train_settings or self._collect_env_settings(cfg)
+        max_steps = int(cfg.train_max_steps)
+        episodes = max(1, int(cfg.train_eval_episodes))
+        rows: list[dict[str, object]] = []
+        for level_id in range(total):
+            env_kwargs = dict(settings)
+            env_kwargs.update(
+                {
+                    "level_mode": "preset",
+                    "level_index": level_id,
+                    "level_cycle": False,
+                    "level_limit": None,
+                }
+            )
+            env = GridSurvivalEnv(**env_kwargs)
+            steps_list: list[int] = []
+            foods_list: list[int] = []
+            rewards_list: list[float] = []
+            goals = 0
+            for _ in range(episodes):
+                steps, foods, total_reward, terminal = self._run_episode_env(env, self.agent, max_steps=max_steps, train=False)
+                steps_list.append(steps)
+                foods_list.append(foods)
+                rewards_list.append(total_reward)
+                if terminal == "goal":
+                    goals += 1
+            template = GridSurvivalEnv.get_level_template(level_id)
+            rows.append(
+                {
+                    "level_id": level_id,
+                    "level_index": level_id + 1,
+                    "name": (template or {}).get("name", f"Level {level_id + 1}"),
+                    "episodes": episodes,
+                    "plays": episodes,
+                    "goals": goals,
+                    "avg_steps": statistics.mean(steps_list) if steps_list else 0.0,
+                    "avg_foods": statistics.mean(foods_list) if foods_list else 0.0,
+                    "avg_reward": statistics.mean(rewards_list) if rewards_list else 0.0,
+                    "success_rate": goals / max(1, episodes),
+                }
+            )
+        self.last_map_eval = rows
+        avg_success = sum(r["success_rate"] for r in rows) / max(1, len(rows))
+        app.toast.push(f"Map eval done: {avg_success * 100:.0f}% avg success")
+
+    def _open_export_map_stats(self, app) -> None:
+        rows = self._map_stats_rows()
+        if not rows:
+            app.toast.push("No map stats to export yet.")
+            return
+        rect = pygame.Rect(0, 0, int(560 * app.theme.ui_scale), int(420 * app.theme.ui_scale))
+        rect.center = app.screen.get_rect().center
+
+        def on_confirm(path: str) -> None:
+            try:
+                export_json(rows, path)
+                export_csv(rows, os.path.splitext(path)[0] + ".csv")
+                app.toast.push(f"Exported map stats -> {path}")
+            except Exception as exc:
+                app.toast.push(f"Export failed: {exc}")
+
+        modal = FileDialogModal(
+            rect,
+            "Export map stats",
+            on_confirm,
+            lambda: None,
+            initial_path=os.path.join("data", "map_stats.json"),
+        )
+        app.push_modal(modal)
+
     def _open_save(self, app) -> None:
         rect = pygame.Rect(0, 0, int(560 * app.theme.ui_scale), int(420 * app.theme.ui_scale))
         rect.center = app.screen.get_rect().center
@@ -357,7 +519,10 @@ class TrainingScene:
         if self.agent is None:
             app.toast.push("No Q-table loaded. Train or load first.")
             return
-        app.push(SimulationScene(agent_override=self.agent))
+        env_overrides = None
+        if bool(getattr(app.cfg, "train_use_settings_for_play", True)):
+            env_overrides = self.last_train_settings or self._collect_env_settings(app.cfg)
+        app.push(SimulationScene(agent_override=self.agent, env_overrides=env_overrides))
 
     def handle_event(self, app, event: pygame.event.Event) -> None:
         if not self.widgets:
@@ -398,6 +563,9 @@ class TrainingScene:
             self._avg_foods.append(foods)
             self._avg_rewards.append(total)
             self.episodes_done += 1
+            checkpoint_every = int(getattr(cfg, "train_checkpoint_every", 0))
+            if checkpoint_every > 0 and self.episodes_done % checkpoint_every == 0:
+                self._save_checkpoint(app, label=f"Checkpoint saved ({self.episodes_done})")
             if self.env is not None:
                 level_id = int(self.env.level_id)
                 stats = self.map_stats.setdefault(level_id, {"plays": 0, "goals": 0, "foods": 0})
@@ -507,20 +675,19 @@ class TrainingScene:
             screen.blit(surf, (panel.x + int(16 * app.theme.ui_scale), y))
             y += int(28 * app.theme.ui_scale)
 
-        if self.map_stats:
+        rows = self._map_stats_rows()
+        if rows:
             y += int(6 * app.theme.ui_scale)
             title = small.render("Worst maps (success rate):", True, app.theme.palette.muted)
             screen.blit(title, (panel.x + int(16 * app.theme.ui_scale), y))
             y += int(22 * app.theme.ui_scale)
             entries = []
-            for level_id, stats in self.map_stats.items():
-                plays = max(1, stats.get("plays", 0))
-                goals = stats.get("goals", 0)
-                rate = goals / plays
-                name = f"Level {level_id + 1}"
-                template = GridSurvivalEnv.get_level_template(level_id)
-                if template and template.get("name"):
-                    name = template["name"]
+            for row in rows:
+                level_id = int(row.get("level_id", 0))
+                rate = float(row.get("success_rate", 0.0))
+                name = str(row.get("name", f"Level {level_id + 1}"))
+                plays = int(row.get("plays", row.get("episodes", 0)) or 0)
+                goals = int(row.get("goals", int(rate * max(1, plays))))
                 entries.append((rate, level_id, goals, plays, name))
             entries.sort(key=lambda item: item[0])
             for rate, level_id, goals, plays, name in entries[:4]:

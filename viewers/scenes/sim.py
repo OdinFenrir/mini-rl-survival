@@ -47,11 +47,12 @@ class Particle:
 
 
 class SimulationScene:
-    def __init__(self, agent_override: QLearningAgent | None = None) -> None:
+    def __init__(self, agent_override: QLearningAgent | None = None, env_overrides: dict | None = None) -> None:
         self.env: GridSurvivalEnv | None = None
         self.agent: QLearningAgent | None = None
         self.obs = None
         self._agent_override = agent_override
+        self._env_overrides = env_overrides or {}
 
         self.paused = False
         self.step_once = False
@@ -225,22 +226,25 @@ class SimulationScene:
 
     def _build(self, app) -> None:
         cfg = app.cfg
-        self.env = GridSurvivalEnv(
-            width=int(cfg.w),
-            height=int(cfg.h),
-            n_hazards=int(cfg.hazards),
-            energy_start=int(cfg.energy_start),
-            energy_food_gain=int(cfg.energy_food),
-            energy_step_cost=int(cfg.energy_step),
-            energy_max=int(getattr(cfg, "energy_max", 0)),
-            seed=int(cfg.seed),
-            level_mode=str(getattr(cfg, "level_mode", "preset")),
-            level_index=int(getattr(cfg, "level_index", 0)),
-            level_cycle=bool(getattr(cfg, "level_cycle", True)),
-            n_walls=int(getattr(cfg, "n_walls", 18)),
-            n_traps=int(getattr(cfg, "n_traps", int(cfg.hazards))),
-            food_enabled=bool(getattr(cfg, "food_enabled", True)),
-        )
+        env_kwargs = {
+            "width": int(cfg.w),
+            "height": int(cfg.h),
+            "n_hazards": int(cfg.hazards),
+            "energy_start": int(cfg.energy_start),
+            "energy_food_gain": int(cfg.energy_food),
+            "energy_step_cost": int(cfg.energy_step),
+            "energy_max": int(getattr(cfg, "energy_max", 0)),
+            "seed": int(cfg.seed),
+            "level_mode": str(getattr(cfg, "level_mode", "preset")),
+            "level_index": int(getattr(cfg, "level_index", 0)),
+            "level_cycle": bool(getattr(cfg, "level_cycle", True)),
+            "n_walls": int(getattr(cfg, "n_walls", 18)),
+            "n_traps": int(getattr(cfg, "n_traps", int(cfg.hazards))),
+            "food_enabled": bool(getattr(cfg, "food_enabled", True)),
+        }
+        if self._env_overrides:
+            env_kwargs.update(self._env_overrides)
+        self.env = GridSurvivalEnv(**env_kwargs)
         qcfg = QLearningConfig(
             alpha=float(cfg.alpha),
             gamma=float(cfg.gamma),

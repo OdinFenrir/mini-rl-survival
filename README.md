@@ -7,6 +7,7 @@ A minimal, hackable tabular reinforcement learning project. The agent learns to 
 - Goal tile unlocks only after the agent eats the fruit.
 - Interactive Pygame viewer with overlays, telemetry, and run history.
 - In-app training screen with curriculum mode and per-map success stats.
+- Batch evaluate all maps and export per-map stats (JSON/CSV).
 - CLI training with curriculum flags for large-scale runs.
 - Save/load Q-tables and environment snapshots.
 
@@ -55,6 +56,11 @@ python -m scripts.train_agent \
   --save data/qtable.pkl
 ```
 
+### Batch Eval All Maps (CLI)
+```sh
+python -m scripts.train_agent --load data/qtable.pkl --eval-all-maps --eval-all-episodes 20 --eval-all-out data/map_stats.json
+```
+
 ## In-app Training
 The Training screen lets you:
 - Start/pause training
@@ -62,6 +68,7 @@ The Training screen lets you:
 - View average reward/steps/foods and worst maps
 - Save/load Q-tables
 - Delete training artifacts (Q-tables, run stats, snapshots)
+- Export per-map stats and run batch “Test all maps”
 
 ## Key Controls (Simulation)
 - Space: Pause/Resume

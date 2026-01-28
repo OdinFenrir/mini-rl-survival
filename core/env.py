@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import deque
 import json
 import os
 import random
@@ -186,10 +187,10 @@ class GridSurvivalEnv:
 		self._rng.seed(seed)
 
 	def _reachable_distances(self, start: Tuple[int, int], blocked: set) -> Dict[Tuple[int, int], int]:
-		queue = [start]
+		queue = deque([start])
 		dist = {start: 0}
 		while queue:
-			x, y = queue.pop(0)
+			x, y = queue.popleft()
 			for dx, dy in ((0, -1), (1, 0), (0, 1), (-1, 0)):
 				nx, ny = x + dx, y + dy
 				if nx < 0 or ny < 0 or nx >= self.width or ny >= self.height:
@@ -235,8 +236,8 @@ class GridSurvivalEnv:
 		if not candidates:
 			# No valid food cell: treat as already collected to avoid soft-lock.
 			self.food = (-1, -1)
-			self.food_collected = False
-			return False
+			self.food_collected = True
+			return True
 		if deterministic:
 			dist_goal = dist_start.get(goal)
 			if dist_goal is None:
@@ -342,10 +343,10 @@ class GridSurvivalEnv:
 	def _path_exists(self, start: Tuple[int, int], goal: Tuple[int, int], blocked: set) -> bool:
 		if start == goal:
 			return True
-		queue = [start]
+		queue = deque([start])
 		seen = {start}
 		while queue:
-			x, y = queue.pop(0)
+			x, y = queue.popleft()
 			for dx, dy in ((0, -1), (1, 0), (0, 1), (-1, 0)):
 				nx, ny = x + dx, y + dy
 				if nx < 0 or ny < 0 or nx >= self.width or ny >= self.height:
