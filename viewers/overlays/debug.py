@@ -7,7 +7,7 @@ from viewers.ui.theme import Theme
 
 class DebugOverlay:
     def render(self, screen: pygame.Surface, theme: Theme, obs, last_action, last_reward, last_done, last_info) -> None:
-        font = pygame.font.SysFont(theme.font_name, int(theme.font_size * theme.ui_scale))
+        font = theme.font(int(theme.font_size * theme.ui_scale))
         pad = int(10 * theme.ui_scale)
         lines = [
             f'obs={tuple(obs)}',

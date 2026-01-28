@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import random
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Any
 
 Action = int  # 0=UP, 1=RIGHT, 2=DOWN, 3=LEFT
 
@@ -58,6 +58,7 @@ class GridSurvivalEnv:
 		self.hazards: List[Tuple[int, int]] = []
 		self.energy = self.energy_start
 		self.steps = 0
+		self._last_step_snapshot: Dict[str, Any] | None = None
 
 	def seed(self, seed: int) -> None:
 		self._rng.seed(seed)
@@ -65,6 +66,8 @@ class GridSurvivalEnv:
 	def reset(self) -> Tuple[int, int, int, int, int]:
 		self.steps = 0
 		self.energy = self.energy_start
+
+		self._last_step_snapshot = None
 
 		self.hazards = []
 		occupied = set()
@@ -92,6 +95,16 @@ class GridSurvivalEnv:
 
 		return self._obs()
 
+	def _capture_pre_step_snapshot(self) -> None:
+		self._last_step_snapshot = {
+			'agent': self.agent,
+			'food': self.food,
+			'hazards': list(self.hazards),
+			'energy': self.energy,
+			'steps': self.steps,
+			'rng_state': self._rng.getstate(),
+		}
+
 	def _spawn_food(self, occupied: set) -> Tuple[int, int]:
 		while True:
 			fx = self._rng.randrange(self.width)
@@ -105,6 +118,7 @@ class GridSurvivalEnv:
 		return (ax, ay, fx, fy, self.energy)
 
 	def step(self, action: Action) -> StepResult:
+		self._capture_pre_step_snapshot()
 		self.steps += 1
 
 		ax, ay = self.agent

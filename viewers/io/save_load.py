@@ -20,8 +20,8 @@ def load_qtable(path: str, seed: int | None = None) -> QLearningAgent:
 
 
 def save_env_snapshot(env: GridSurvivalEnv, path: str) -> None:
-    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-    payload: Dict[str, Any] = {
+	os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+	payload: Dict[str, Any] = {
         'version': SAVE_VERSION,
         'width': env.width,
         'height': env.height,
@@ -34,12 +34,48 @@ def save_env_snapshot(env: GridSurvivalEnv, path: str) -> None:
         'hazards': [list(h) for h in env.hazards],
         'energy': env.energy,
         'steps': env.steps,
-    }
-    rng = getattr(env, '_rng', None)
-    if rng is not None and hasattr(rng, 'getstate'):
-        payload['rng_state'] = rng.getstate()
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(payload, f)
+	}
+	rng = getattr(env, '_rng', None)
+	if rng is not None and hasattr(rng, 'getstate'):
+		payload['rng_state'] = rng.getstate()
+	prev_snapshot = getattr(env, '_last_step_snapshot', None)
+	if prev_snapshot is not None:
+		payload['prev_state'] = _snapshot_to_payload(prev_snapshot)
+		payload['state_kind'] = 'pre_step'
+		env._last_step_snapshot = None
+	else:
+		payload['state_kind'] = 'current'
+	with open(path, 'w', encoding='utf-8') as f:
+		json.dump(payload, f)
+
+
+def _tupleize_state(obj: Any) -> Any:
+	if isinstance(obj, list):
+		return tuple(_tupleize_state(item) for item in obj)
+	return obj
+
+
+def _snapshot_to_payload(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+	return {
+		'agent': [int(snapshot['agent'][0]), int(snapshot['agent'][1])],
+		'food': [int(snapshot['food'][0]), int(snapshot['food'][1])],
+		'hazards': [[int(x), int(y)] for x, y in snapshot['hazards']],
+		'energy': int(snapshot['energy']),
+		'steps': int(snapshot['steps']),
+		'rng_state': snapshot['rng_state'],
+	}
+
+
+def _restore_state(env: GridSurvivalEnv, state_payload: Dict[str, Any]) -> None:
+	env.agent = (int(state_payload['agent'][0]), int(state_payload['agent'][1]))
+	env.food = (int(state_payload['food'][0]), int(state_payload['food'][1]))
+	env.hazards = [(int(x), int(y)) for x, y in state_payload['hazards']]
+	env.energy = int(state_payload['energy'])
+	env.steps = int(state_payload['steps'])
+	rng = getattr(env, '_rng', None)
+	if rng is not None and 'rng_state' in state_payload and hasattr(rng, 'setstate'):
+		rng_state = _tupleize_state(state_payload['rng_state'])
+		rng.setstate(rng_state)
 
 
 def load_env_snapshot(path: str) -> GridSurvivalEnv:
@@ -56,12 +92,9 @@ def load_env_snapshot(path: str) -> GridSurvivalEnv:
         energy_step_cost=int(payload['energy_step_cost']),
         seed=None,
     )
-    env.agent = (int(payload['agent'][0]), int(payload['agent'][1]))
-    env.food = (int(payload['food'][0]), int(payload['food'][1]))
-    env.hazards = [(int(x), int(y)) for x, y in payload['hazards']]
-    env.energy = int(payload['energy'])
-    env.steps = int(payload['steps'])
-    rng = getattr(env, '_rng', None)
-    if rng is not None and 'rng_state' in payload and hasattr(rng, 'setstate'):
-        rng.setstate(payload['rng_state'])
+    state_payload = payload
+    if payload.get('state_kind') == 'pre_step' and 'prev_state' in payload:
+        state_payload = payload['prev_state']
+    _restore_state(env, state_payload)
+    setattr(env, '_last_step_snapshot', None)
     return env

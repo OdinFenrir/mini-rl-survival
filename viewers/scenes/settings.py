@@ -85,13 +85,16 @@ class SettingsScene:
                             lambda: bool(cfg.reduced_motion), lambda b: setattr(cfg, "reduced_motion", bool(b)))); i += 1
 
         def cycle_color():
-            modes = ["default", "colorblind", "high_contrast"]
+            modes = ["pixel", "default", "colorblind", "high_contrast"]
             cur = cfg.color_mode if cfg.color_mode in modes else "default"
             cfg.color_mode = modes[(modes.index(cur) + 1) % len(modes)]
             app.apply_theme_from_config()
             app.toast.push(f"Color mode: {cfg.color_mode}")
 
         items.append(Button(rect(i), f"Color mode: {cfg.color_mode} (click to cycle)", cycle_color)); i += 1
+        items.append(Slider(rect(i), "Heatmap opacity", 0.1, 1.0, 0.05,
+                            lambda: float(getattr(cfg, "heatmap_opacity", 0.7)),
+                            lambda v: setattr(cfg, "heatmap_opacity", float(v)), fmt="{:.2f}")); i += 1
 
         # Footer buttons (fixed)
         bw = int(220 * scale)
@@ -101,8 +104,12 @@ class SettingsScene:
         by = footer_y + (footer_h - bh) // 2
 
         def apply():
+            prev_scale = float(app.theme.ui_scale)
+            prev_mode = str(app.theme.ui_style)
             app.apply_theme_from_config()
             app.toast.push("Settings applied")
+            if float(app.theme.ui_scale) != prev_scale or str(app.theme.ui_style) != prev_mode:
+                self._layout(app)
 
         def defaults():
             from viewers.app import AppConfig
@@ -242,7 +249,7 @@ class SettingsScene:
 
         screen.fill(app.theme.palette.bg)
 
-        title_font = pygame.font.SysFont(app.theme.font_name, int(app.theme.font_size_title * 0.55 * app.theme.ui_scale))
+        title_font = app.theme.font(int(app.theme.font_size_title * 0.55 * app.theme.ui_scale))
         title = title_font.render("Settings", True, app.theme.palette.fg)
         screen.blit(title, (int(60 * app.theme.ui_scale), int(30 * app.theme.ui_scale)))
 
@@ -287,7 +294,7 @@ class SettingsScene:
         focused = self.focus.focused()
         for w in self.footer_widgets:
             w.draw(screen, app.theme, focused=(w is focused))        # Hint (placed under title so it never overlaps footer buttons)
-        font = pygame.font.SysFont(app.theme.font_name, int(app.theme.font_size * app.theme.ui_scale))
+        font = app.theme.font(int(app.theme.font_size * app.theme.ui_scale))
         hint = font.render("Scroll: mouse wheel / PgUp-PgDn | Tab to navigate | Esc to go back", True, app.theme.palette.muted)
         hint_y = int(30 * app.theme.ui_scale) + title.get_height() + int(10 * app.theme.ui_scale)
         screen.blit(hint, (int(60 * app.theme.ui_scale), hint_y))

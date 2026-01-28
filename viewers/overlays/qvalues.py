@@ -21,7 +21,7 @@ class QValuesOverlay:
         if not candidates:
             return
         s, q = max(candidates, key=lambda sq: int(sq[0][4]) if len(sq[0]) > 4 else 0)
-        font = pygame.font.SysFont(theme.font_name, int(theme.font_size * theme.ui_scale))
+        font = theme.font(int(theme.font_size * theme.ui_scale))
         pad = int(10 * theme.ui_scale)
         lines = [
             f'cell=({x},{y}) state={tuple(s)}',

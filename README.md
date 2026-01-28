@@ -186,3 +186,67 @@ Run:
 ```sh
 python -m viewers
 ```
+
+## Viewer UX Updates
+- The simulation scene now dedicates a left-hand tool bar for quick actions (save/load/export) so the grid stays visible, while the buttons remind you of the same hotkeys (Ctrl+S, Ctrl+L, Ctrl+O, Ctrl+I, Ctrl+E, Ctrl+X).  
+- Press **Ctrl+L** in the simulation scene to type or accept `data/qtable_saved.pkl` in the load modal, and double-check `data/` contains the file before hitting Enter.  
+- Press **Ctrl+K** to toggle the new run-history overlay; every completed episode is logged to `data/run_history.jsonl` with config metadata so you can review recent rewards/steps without leaving the viewer.  
+- The telemetry overlay now keeps rolling averages and terminal counts visible near the HUD, helping you spot learning progress without leaving the app.
+
+## Project Status (Source of Truth)
+
+Legend:
+- ✅ Implemented + working
+- 🟨 Partially implemented / wired but incomplete
+- ⛔ Not started
+
+### Core Architecture
+- ✅ App loop + scene stack: `viewers/app.py`
+- ✅ Entry point: `viewers/__main__.py`, `viewers/pygame_viewer.py`
+- ✅ Scene modules: `viewers/scenes/menu.py`, `sim.py`, `settings.py`, `help.py`
+- ✅ UI primitives (widgets/theme/layout): `viewers/ui/widgets.py`, `viewers/ui/theme.py`, `viewers/ui/layout.py`
+- ✅ IO helpers: `viewers/io/save_load.py`, `viewers/io/export.py`
+- ✅ Overlays modules exist: `viewers/overlays/*`
+
+## Features
+- Main menu with keyboard focus and pixel-style buttons.
+- Training tab: run end-to-end learning (start/pause/resume/eval/save/play).
+- Settings scene with scrolling content and fixed footer actions.
+- Simulation controls for pause/step/reset and policy toggles.
+- Overlays: stats HUD, help, debug, policy arrows, Q-hover, telemetry, run history.
+- Save/load Q-table and environment snapshots via file dialogs.
+- Export screenshots and stats (JSON + CSV).
+- Centralized keymap drives help overlay and controls.
+- Crash dump + recovery screen on unexpected errors.
+- Theme modes including pixel + high-contrast + colorblind.
+
+## Remaining TODO (optional)
+- Add CI workflow for tests and headless pygame import.
+- Add smoother animations or transitions.
+
+---
+
+## Final Polish & Portfolio-Grade Features
+
+- Modern, visually appealing grid icons for agent, food, and hazards
+- Gradient and rounded panels for all UI widgets (buttons, sliders, toggles)
+- Always-visible focus rings for keyboard accessibility
+- Heatmap opacity slider in settings for user control
+- Responsive layout and font scaling for all window sizes
+- Colorblind and high-contrast modes
+- Friendly crash screen and robust error handling
+- In-app help overlay generated from a single keymap source
+- File picker modals for all save/load/export actions
+- Telemetry overlay with rolling averages and sparklines
+- All overlays toggleable, readable, and performant
+- Modular, extensible architecture for future features
+
+This ensures the app is not just functional, but delightful and professional for all users.
+
+---
+
+## Third-party assets
+- Kenney 1-Bit Pack (CC0) in `assets/1bitpack_kenney_1.1` (Kenney).
+- Kenney Game Icons (CC0) in `assets/kenney_game_icons` (Kenney).
+- Food Pixel Art (CC0) in `assets/food_pixel_art` (LucaPixel).
+- Press Start 2P font (SIL OFL 1.1) in `assets/press-start-2p`.

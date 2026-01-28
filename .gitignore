@@ -3,7 +3,5 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
-data/*.pkl
-data/*.png
-data/*.json
-data/*.csv
+data/*
+!data/.gitkeep
