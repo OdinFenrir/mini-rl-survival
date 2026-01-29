@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import json
 import os
 import pygame
 
@@ -7,6 +8,30 @@ from core.env import GridSurvivalEnv
 
 from viewers.ui.modals import ConfirmDialog
 from viewers.ui.widgets import Button, Slider, Toggle, FocusManager, Label
+
+DEFAULTS_PATH = os.path.join("data", "viewer_defaults.json")
+
+
+def _load_defaults_cfg():
+    from viewers.app import AppConfig
+    defaults = AppConfig()
+    try:
+        with open(DEFAULTS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if hasattr(defaults, k):
+                    setattr(defaults, k, v)
+    except Exception:
+        pass
+    return defaults
+
+
+def _save_defaults_cfg(cfg) -> None:
+    from dataclasses import asdict
+    os.makedirs(os.path.dirname(DEFAULTS_PATH) or ".", exist_ok=True)
+    with open(DEFAULTS_PATH, "w", encoding="utf-8") as f:
+        json.dump(asdict(cfg), f, indent=2)
 
 
 class SettingsScene:
@@ -265,15 +290,13 @@ class SettingsScene:
         by = footer_y + (footer_h - bh) // 2
 
         def defaults_all() -> None:
-            from viewers.app import AppConfig
-            app.cfg = AppConfig()
+            app.cfg = _load_defaults_cfg()
             app.apply_theme_from_config()
             app.toast.push("Restored defaults")
             self._layout(app)  # rebuild with defaults
 
         def defaults_training() -> None:
-            from viewers.app import AppConfig
-            defaults = AppConfig()
+            defaults = _load_defaults_cfg()
             for name in (
                 "w", "h", "hazards", "energy_start", "energy_food", "energy_step", "energy_max", "seed",
                 "level_mode", "level_index", "level_cycle", "n_walls", "n_traps", "food_enabled",
@@ -284,12 +307,22 @@ class SettingsScene:
             app.toast.push("Training defaults restored")
             self._layout(app)
 
+        def save_defaults_all() -> None:
+            _save_defaults_cfg(app.cfg)
+            app.toast.push("Defaults saved")
+
+        def save_defaults_training() -> None:
+            _save_defaults_cfg(app.cfg)
+            app.toast.push("Training defaults saved")
+
         buttons: list[Button] = []
         if show_training and not show_general:
             buttons.append(Button(pygame.Rect(0, 0, bw, bh), "Reset training defaults", defaults_training))
+            buttons.append(Button(pygame.Rect(0, 0, bw, bh), "Save training defaults", save_defaults_training))
             buttons.append(Button(pygame.Rect(0, 0, bw, bh), "Back", lambda: app.pop()))
         else:
             buttons.append(Button(pygame.Rect(0, 0, bw, bh), "Defaults", defaults_all))
+            buttons.append(Button(pygame.Rect(0, 0, bw, bh), "Save defaults", save_defaults_all))
             buttons.append(Button(pygame.Rect(0, 0, bw, bh), "Back", lambda: app.pop()))
 
         total_w = len(buttons) * bw + max(0, len(buttons) - 1) * gap2

@@ -259,10 +259,10 @@ class GridSurvivalEnv:
 				continue
 			candidates.append((pos, d1, d2))
 		if not candidates:
-			# No valid food cell: treat as already collected to avoid soft-lock.
+			# No valid food cell found (based on energy + reachability).
 			self.food = (-1, -1)
-			self.food_collected = True
-			return True
+			self.food_collected = False
+			return False
 		dist_start_goal = dist_start.get(goal)
 		min_start, min_goal = self._food_distance_targets(dist_start_goal)
 		filtered = [c for c in candidates if c[1] >= min_start and c[2] >= min_goal]
@@ -367,11 +367,11 @@ class GridSurvivalEnv:
 		self.level_style = level.get("style") or self._style_from_walls()
 
 	def _random_empty_cell(self, occupied: set, width: int, height: int) -> Tuple[int, int]:
-		while True:
-			x = self._rng.randrange(width)
-			y = self._rng.randrange(height)
-			if (x, y) not in occupied:
-				return (x, y)
+		empties = [(x, y) for y in range(height) for x in range(width) if (x, y) not in occupied]
+		if not empties:
+			# Avoid infinite loops on malformed layouts.
+			return (0, 0)
+		return self._rng.choice(empties)
 
 	def _path_exists(self, start: Tuple[int, int], goal: Tuple[int, int], blocked: set) -> bool:
 		if start == goal:

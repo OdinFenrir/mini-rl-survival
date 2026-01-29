@@ -36,6 +36,7 @@ def save_env_snapshot(env: GridSurvivalEnv, path: str) -> None:
         'level_index': getattr(env, "level_index", 0),
         'level_cycle': getattr(env, "level_cycle", False),
         'food_enabled': getattr(env, "food_enabled", True),
+        'placement_difficulty': getattr(env, "placement_difficulty", "medium"),
         'agent': list(env.agent),
         'food': list(env.food),
         'goal': list(getattr(env, "goal", (0, 0))),
@@ -123,6 +124,7 @@ def load_env_snapshot(path: str) -> GridSurvivalEnv:
         n_walls=int(payload.get('n_walls', 0)),
         n_traps=int(payload.get('n_traps', payload.get('n_hazards', 0))),
         food_enabled=bool(payload.get('food_enabled', True)),
+        placement_difficulty=str(payload.get('placement_difficulty', 'medium')),
     )
     state_payload = payload
     if payload.get('state_kind') == 'pre_step' and 'prev_state' in payload:

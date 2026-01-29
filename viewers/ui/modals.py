@@ -56,7 +56,13 @@ class FileDialogModal(Modal):
         self.selected_index = 0
         self._layout_cache: dict[str, pygame.Rect | int | float] = {}
         self._last_scale = 1.0
+        self._confirm_overwrite_for: str | None = None
         self._refresh_files()
+
+    def _set_path(self, path: str) -> None:
+        self.path = path
+        self._confirm_overwrite_for = None
+        self.error = ""
 
     def _layout(self, scale: float) -> dict[str, pygame.Rect | int | float]:
         scale = float(scale or 1.0)
@@ -160,7 +166,7 @@ class FileDialogModal(Modal):
                 max_rows = max(0, (list_rect.h - (items_y0 - list_rect.y) - 4) // row_h)
                 if 0 <= idx < min(len(self.files), max_rows):
                     self.selected_index = int(idx)
-                    self.path = os.path.join(self.browse_dir, self.files[self.selected_index])
+                    self._set_path(os.path.join(self.browse_dir, self.files[self.selected_index]))
                     return
 
         if event.type == pygame.KEYDOWN:
@@ -174,12 +180,12 @@ class FileDialogModal(Modal):
 
             if event.key == pygame.K_UP and self.files:
                 self.selected_index = max(0, self.selected_index - 1)
-                self.path = os.path.join(self.browse_dir, self.files[self.selected_index])
+                self._set_path(os.path.join(self.browse_dir, self.files[self.selected_index]))
                 return
 
             if event.key == pygame.K_DOWN and self.files:
                 self.selected_index = min(len(self.files) - 1, self.selected_index + 1)
-                self.path = os.path.join(self.browse_dir, self.files[self.selected_index])
+                self._set_path(os.path.join(self.browse_dir, self.files[self.selected_index]))
                 return
 
             if event.key == pygame.K_v and (event.mod & pygame.KMOD_CTRL):
@@ -191,17 +197,17 @@ class FileDialogModal(Modal):
                     if clip:
                         if isinstance(clip, bytes):
                             clip = clip.decode("utf-8", errors="ignore")
-                        self.path += str(clip).strip()
+                        self._set_path(self.path + str(clip).strip())
                 except Exception:
                     pass
                 return
 
             if event.key == pygame.K_BACKSPACE:
-                self.path = self.path[:-1]
+                self._set_path(self.path[:-1])
                 return
 
             if self.input_active and event.unicode and event.unicode.isprintable():
-                self.path += event.unicode
+                self._set_path(self.path + event.unicode)
                 return
 
     def _confirm(self) -> None:
@@ -212,6 +218,11 @@ class FileDialogModal(Modal):
         if self.must_exist and not os.path.exists(p):
             self.error = "File does not exist"
             return
+        if not self.must_exist and os.path.exists(p):
+            if self._confirm_overwrite_for != p:
+                self._confirm_overwrite_for = p
+                self.error = "File exists. Press OK again to overwrite."
+                return
         try:
             self.on_confirm(p)
             self.close()
@@ -323,6 +334,8 @@ class TrainingSetupWizard(Modal):
         super().__init__(rect, "New Q-table (guided)", on_close=on_cancel)
         self.cfg = cfg
         self.on_apply = on_apply
+        self._original_cfg = dict(getattr(cfg, "__dict__", {}))
+        self._applied = False
         self._step = 0
         self._steps = ["intro", "env", "train", "curriculum", "summary"]
         self._widgets: list = []
@@ -332,6 +345,12 @@ class TrainingSetupWizard(Modal):
         self._last_scale = 1.0
         self._show_warnings = False
         self._preset_mode = "advanced"
+        self._restore_on_close = True
+
+    def _restore_cfg(self) -> None:
+        for key, value in self._original_cfg.items():
+            if hasattr(self.cfg, key):
+                setattr(self.cfg, key, value)
 
     def _lines_for_step(self) -> list[str]:
         if self._steps[self._step] == "intro":
@@ -381,6 +400,8 @@ class TrainingSetupWizard(Modal):
 
     def _apply_beginner_preset(self) -> None:
         self._preset_mode = "beginner"
+        self.cfg.level_mode = "preset"
+        self.cfg.level_cycle = True
         self.cfg.train_curriculum = True
         self.cfg.train_curriculum_start = 5
         self.cfg.train_curriculum_step = 5
@@ -390,9 +411,13 @@ class TrainingSetupWizard(Modal):
         self.cfg.energy_start = 60
         self.cfg.energy_max = 80
         self.cfg.energy_food = 30
-        self.cfg.train_eval_every = 0
-        self.cfg.train_speed = 20
+        self.cfg.train_eval_every = 200
+        self.cfg.train_eval_episodes = 50
+        self.cfg.train_max_steps = 400
+        self.cfg.train_speed = 15
         self.cfg.train_episodes = 20000
+        self.cfg.train_checkpoint_every = 500
+        self.cfg.train_use_settings_for_play = True
         self.cfg.placement_difficulty = "medium"
         self._dirty = True
 
@@ -520,7 +545,13 @@ class TrainingSetupWizard(Modal):
             self._dirty = True
         else:
             self.on_apply()
+            self._applied = True
             self.close()
+
+    def close(self):
+        if self._restore_on_close and not self._applied:
+            self._restore_cfg()
+        super().close()
 
     def handle_event(self, event):
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
