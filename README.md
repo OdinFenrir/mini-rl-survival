@@ -1,6 +1,34 @@
 # Mini RL Survival
 
+## Overview
 A minimal, hackable tabular reinforcement learning project. The agent learns to navigate grid mazes with walls, a key, and a door using Q-learning. Everything is implemented from scratch for transparency and education.
+
+## Tech Stack
+- Python 3.10+
+- Pygame
+- NumPy
+- Matplotlib (optional plotting flows)
+
+## Features
+- 50 preset mazes and random mode
+- Door/key progression mechanics
+- In-app training UI and curriculum controls
+- Q-table save/load workflows
+- Batch map evaluation with JSON/CSV output
+
+## Screenshots
+- Add viewer screenshots to `docs/` and link them here.
+
+## Run Locally
+```sh
+pip install -r requirements.txt
+python -m viewers
+```
+
+## Roadmap
+- [ ] Add a short GIF demo to README
+- [ ] Add a benchmark table for default curriculum settings
+- [ ] Add one-click script for first-time training preset
 
 ## Highlights
 - 50 curated preset mazes (plus random mode) with key and door gating.
